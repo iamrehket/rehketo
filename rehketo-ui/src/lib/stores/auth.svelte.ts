@@ -26,7 +26,7 @@ export const auth = {
 	},
 	hydrate(me: MeOut, caps: CapabilitiesOut): void {
 		state = {
-			user: me.user,
+			user: { id: me.id, display_name: me.display_name, email: me.email },
 			capabilities: new SvelteSet(caps.actions)
 		};
 	},

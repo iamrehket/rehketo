@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
+	import { dismiss } from '$lib/actions/dismiss';
 	import { apiFetch } from '$lib/api';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { conversations } from '$lib/stores/conversations.svelte';
@@ -30,7 +31,7 @@
 </script>
 
 {#if user}
-	<div class="relative">
+	<div class="relative" use:dismiss={{ active: open, onDismiss: () => (open = false) }}>
 		<button
 			type="button"
 			onclick={() => (open = !open)}
@@ -45,10 +46,8 @@
 		</button>
 
 		{#if open}
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				class="absolute bottom-full left-0 z-20 mb-1 w-full overflow-hidden rounded-md border border-border bg-surface text-sm shadow-lg"
-				onmouseleave={() => (open = false)}
 			>
 				<button
 					type="button"

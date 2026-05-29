@@ -1,19 +1,15 @@
-// Sidebar: rename a conversation, then archive it.
+// Sidebar: the conversation actions menu dismisses cleanly, then rename → archive.
 //
-// TODO(e2e): the "Conversation actions" button is opacity-0 until the row
-// is hovered (group-hover:opacity-100). force:true click bypasses the
-// visibility check but the dropdown menu interaction is timing-flaky
-// in headless chromium. Iterate by either:
-//   - Inspecting page state via `pnpm exec playwright test --debug`
-//     and adjusting the selector chain.
-//   - Removing the opacity-0 → group-hover treatment from the menu
-//     button (UI change) so it's always visible to tests.
-//
-// Skipped for now; the framework is proven by chat.e2e.ts.
+// Regression guard for the "phantom navigation" bug: the row's action menu
+// used to live inside the conversation's <a href="/c/{id}"> link, so clicking
+// Rename/Archive bubbled to the anchor and navigated to the conversation —
+// discarding the action's effect. The toHaveURL assertions below fail if that
+// ever returns: a menu click must never change the route. The Escape check
+// guards the dismissal behavior (the menu no longer closes only on mouseleave).
 
 import { test, expect, csrfHeaders } from './fixtures/auth';
 
-test.skip('rename then archive removes the conversation from the sidebar', async ({
+test('menu dismisses on Escape, then rename then archive removes the conversation', async ({
 	page,
 	loggedInRequest,
 	context
@@ -27,17 +23,31 @@ test.skip('rename then archive removes the conversation from the sidebar', async
 	await page.goto('/');
 
 	const actions = page.getByLabel('Conversation actions').first();
-	await actions.click({ force: true });
+	const rename = page.getByRole('button', { name: 'Rename' });
 
-	await page.getByRole('button', { name: 'Rename' }).click();
+	// Open the menu, then dismiss it with Escape.
+	await actions.hover();
+	await actions.click();
+	await expect(rename).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(rename).toHaveCount(0);
+
+	// Reopen and rename. The menu click must not navigate away from the root.
+	await actions.hover();
+	await actions.click();
+	await rename.click();
+	await expect(page).not.toHaveURL(/\/c\//);
+
 	const input = page.getByRole('textbox').first();
 	await input.fill('renamed by e2e');
 	await input.press('Enter');
 
 	await expect(page.getByText('renamed by e2e')).toBeVisible();
 
-	await actions.click({ force: true });
+	await actions.hover();
+	await actions.click();
 	await page.getByRole('button', { name: 'Archive' }).click();
+	await expect(page).not.toHaveURL(/\/c\//);
 
 	await expect(page.getByText('renamed by e2e')).toHaveCount(0);
 });

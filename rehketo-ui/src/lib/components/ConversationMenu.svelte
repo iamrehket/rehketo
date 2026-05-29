@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 
+	import { dismiss } from '$lib/actions/dismiss';
 	import { apiFetch } from '$lib/api';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { conversations } from '$lib/stores/conversations.svelte';
@@ -60,23 +61,18 @@
 		class="w-full rounded bg-surface-hover px-2 py-1 text-sm text-text ring-1 ring-accent outline-none"
 	/>
 {:else}
-	<div class="relative inline-block">
+	<div class="relative inline-block" use:dismiss={{ active: open, onDismiss: close }}>
 		<button
 			type="button"
-			onclick={(e) => {
-				e.stopPropagation();
-				open = !open;
-			}}
+			onclick={() => (open = !open)}
 			class="rounded p-1 text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:bg-surface-hover hover:text-text"
 			aria-label="Conversation actions"
 		>
 			⋯
 		</button>
 		{#if open}
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				class="absolute top-full right-0 z-20 mt-1 w-40 overflow-hidden rounded-md border border-border bg-surface text-sm shadow-lg"
-				onmouseleave={close}
 			>
 				{#if auth.can('chat.rename_conversation')}
 					<button
