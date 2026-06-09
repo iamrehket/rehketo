@@ -32,8 +32,13 @@ export type Capability =
 	| 'admin.manage_users'
 	| 'admin.view_audit';
 
+// The /me response is flat (matches rehketo-api/rehketo/api/me.py). `User` is
+// assembled from these fields in auth.hydrate; the backend is the contract
+// source of truth (see tools/check_contract.py).
 export type MeOut = {
-	user: User;
+	id: string;
+	display_name: string | null;
+	email: string | null;
 	roles: string[];
 };
 
