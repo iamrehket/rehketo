@@ -16,6 +16,7 @@ from sse_starlette.sse import EventSourceResponse
 from rehketo.db import get_session
 from rehketo.db.models import Run
 from rehketo.permissions.dependencies import ResolvedPermissions, resolve_permissions
+from rehketo.runs.cancellation import TERMINAL_RUN_STATES, request_cancel
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -108,13 +109,9 @@ def _encode_sse_event(event: dict[str, object]) -> dict[str, str]:
     }
 
 
-_TERMINAL_RUN_STATES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
-
-
 @router.post("/{run_id}/cancel", status_code=204)
 async def cancel_run(
     run_id: UUID,
-    request: Request,
     db: Annotated[AsyncSession, Depends(get_session)],
     perms: Annotated[ResolvedPermissions, Depends(resolve_permissions)],
 ) -> None:
@@ -130,7 +127,8 @@ async def cancel_run(
     ).scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
-    if run.status in _TERMINAL_RUN_STATES:
+    if run.status in TERMINAL_RUN_STATES:
         raise HTTPException(status_code=409, detail=f"run already {run.status}")
-    registry = request.app.state.task_registry
-    registry.cancel(run_id)
+    if not await request_cancel(db, run_id):
+        # Run went terminal between the check above and the UPDATE.
+        raise HTTPException(status_code=409, detail="run already terminal")

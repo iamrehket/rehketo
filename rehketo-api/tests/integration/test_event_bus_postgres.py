@@ -3,13 +3,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 import pytest_asyncio
 
-from rehketo.db import reset_engine_for_tests, sessionmaker
-from rehketo.db.models import Conversation, Run, User
+from rehketo.db import reset_engine_for_tests
 from rehketo.runs.event_bus import PostgresEventBus
+from tests.integration._helpers import mk_running_run
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -24,28 +23,6 @@ async def bus(settings_env: object, db_url: str) -> AsyncIterator[PostgresEventB
     await b.start()
     yield b
     await b.stop()
-
-
-async def _mk_run() -> str:
-    async with sessionmaker()() as db:
-        user = User(id=uuid4(), display_name="t", email=f"{uuid4().hex}@example.test")
-        conv = Conversation(id=uuid4(), user_id=user.id)
-        run = Run(
-            id=uuid4(),
-            conversation_id=conv.id,
-            user_id=user.id,
-            status="running",
-            model="test-model",
-        )
-        # No relationship() on these models, so SQLAlchemy won't order the
-        # inserts by FK — flush parent rows before their children.
-        db.add(user)
-        await db.flush()
-        db.add(conv)
-        await db.flush()
-        db.add(run)
-        await db.commit()
-        return str(run.id)
 
 
 async def _collect(
@@ -67,7 +44,7 @@ async def _collect(
 
 
 async def test_publish_then_subscribe_replays(bus: PostgresEventBus) -> None:
-    run_id = await _mk_run()
+    run_id = await mk_running_run()
     for i in range(5):
         await bus.publish(run_id, {"type": "tick", "i": i})
     events = await asyncio.wait_for(_collect(bus, run_id, 5), timeout=10)
@@ -77,7 +54,7 @@ async def test_publish_then_subscribe_replays(bus: PostgresEventBus) -> None:
 
 
 async def test_live_publish_wakes_subscriber(bus: PostgresEventBus) -> None:
-    run_id = await _mk_run()
+    run_id = await mk_running_run()
 
     async def publisher() -> None:
         await asyncio.sleep(0.1)
@@ -91,7 +68,7 @@ async def test_live_publish_wakes_subscriber(bus: PostgresEventBus) -> None:
 
 
 async def test_from_sequence_resumes_inclusive(bus: PostgresEventBus) -> None:
-    run_id = await _mk_run()
+    run_id = await mk_running_run()
     for i in range(5):
         await bus.publish(run_id, {"type": "tick", "i": i})
     events = await asyncio.wait_for(
@@ -101,7 +78,7 @@ async def test_from_sequence_resumes_inclusive(bus: PostgresEventBus) -> None:
 
 
 async def test_isolation_between_runs(bus: PostgresEventBus) -> None:
-    r1, r2 = await _mk_run(), await _mk_run()
+    r1, r2 = await mk_running_run(), await mk_running_run()
     await bus.publish(r1, {"type": "tick"})
     await bus.publish(r2, {"type": "tock"})
     e1 = await asyncio.wait_for(_collect(bus, r1, 1), timeout=10)
@@ -114,7 +91,7 @@ async def test_concurrent_subscribers_same_run(bus: PostgresEventBus) -> None:
     """Two subscribers on one run share the wake set: one NOTIFY must wake
     both, and their teardowns at different times must not disturb each
     other."""
-    run_id = await _mk_run()
+    run_id = await mk_running_run()
     c1 = asyncio.create_task(_collect(bus, run_id, 3))
     c2 = asyncio.create_task(_collect(bus, run_id, 3))
     await asyncio.sleep(0.1)
@@ -134,7 +111,7 @@ async def test_cross_instance_delivery(bus: PostgresEventBus) -> None:
     other = PostgresEventBus(poll_interval=30.0)
     await other.start()
     try:
-        run_id = await _mk_run()
+        run_id = await mk_running_run()
         await bus.publish(run_id, {"type": "sentinel"})
         got_sentinel = asyncio.Event()
         received: list[dict] = []
@@ -163,7 +140,7 @@ async def test_cross_instance_delivery(bus: PostgresEventBus) -> None:
 
 async def test_events_survive_bus_restart(bus: PostgresEventBus) -> None:
     """The durability claim itself: a fresh instance replays everything."""
-    run_id = await _mk_run()
+    run_id = await mk_running_run()
     await bus.publish(run_id, {"type": "tick", "i": 0})
     await bus.publish(run_id, {"type": "run.ended"})
     await bus.stop()

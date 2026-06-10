@@ -19,8 +19,8 @@ from rehketo.auth.cookies import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
 from rehketo.auth.csrf import issue_csrf_token
 from rehketo.auth.sessions import create_session
 from rehketo.db.models import Conversation, User, UserRole
-from rehketo.main import create_app
 from rehketo.runs.registry import get_registry, reset_registry_for_tests
+from tests.integration._helpers import await_run_terminal, live_app
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
@@ -70,8 +70,12 @@ async def test_second_cancel_during_finalizer_still_cancels(
     )
     csrf = issue_csrf_token(str(sid))
 
-    app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+    # live_app: cancel propagation now rides the control channel, so the test
+    # needs the RunControlListener that _lifespan/live_app starts.
+    async with (
+        live_app() as app,
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c,
+    ):
         r = await c.post(
             f"/conversations/{conv.id}/messages",
             cookies={SESSION_COOKIE: str(sid), CSRF_COOKIE: csrf},
@@ -83,7 +87,8 @@ async def test_second_cancel_during_finalizer_still_cancels(
 
         await asyncio.sleep(0.3)
 
-        # First cancel — HTTP endpoint.
+        # First cancel — HTTP endpoint (delivered asynchronously via the
+        # control channel).
         r2 = await c.post(
             f"/runs/{run_id}/cancel",
             cookies={SESSION_COOKIE: str(sid), CSRF_COOKIE: csrf},
@@ -91,14 +96,17 @@ async def test_second_cancel_during_finalizer_still_cancels(
         )
         assert r2.status_code == 204
 
-        # Second cancel — directly through the registry, racing the shielded
-        # finalizer. Returns False once the task has finished; True while the
-        # task is still settling. Either outcome is acceptable: the invariant
-        # under test is that the run still ends in 'cancelled'.
+        # Second cancel — directly through the registry, racing both the
+        # control-channel delivery and the shielded finalizer. Returns False
+        # once the task has finished; True while the task is still settling.
+        # Either outcome is acceptable: the invariant under test is that the
+        # run still ends in 'cancelled'.
         get_registry().cancel(UUID(run_id))
 
-        await asyncio.sleep(3.0)
+        # Cancellation is asynchronous now, so poll until terminal instead
+        # of sleeping.
+        status = await await_run_terminal(
+            c, run_id, cookies={SESSION_COOKIE: str(sid)}, timeout_s=10
+        )
 
-        r3 = await c.get(f"/runs/{run_id}", cookies={SESSION_COOKIE: str(sid)})
-
-    assert r3.json()["status"] == "cancelled"
+    assert status == "cancelled"

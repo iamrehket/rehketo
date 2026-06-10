@@ -9,31 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from rehketo.agent.sweep import sweep_abandoned_runs
-from rehketo.db import reset_engine_for_tests, sessionmaker
+from rehketo.db import reset_engine_for_tests
 from rehketo.db.models import Conversation, Run, User
 from rehketo.runs.event_bus import PostgresEventBus
-
-
-async def _mk_running_run() -> str:
-    async with sessionmaker()() as db:
-        user = User(id=uuid4(), display_name="t", email=f"{uuid4().hex}@example.test")
-        conv = Conversation(id=uuid4(), user_id=user.id)
-        run = Run(
-            id=uuid4(),
-            conversation_id=conv.id,
-            user_id=user.id,
-            status="running",
-            model="test-model",
-        )
-        # No relationship() on these models, so SQLAlchemy won't order the
-        # inserts by FK — flush parent rows before their children.
-        db.add(user)
-        await db.flush()
-        db.add(conv)
-        await db.flush()
-        db.add(run)
-        await db.commit()
-        return str(run.id)
+from tests.integration._helpers import mk_running_run
 
 
 async def test_sweep_marks_running_runs_as_failed(
@@ -90,7 +69,7 @@ async def test_sweep_publishes_closure_events(
     """A client reconnecting to a dead run's stream must get the normal
     terminal sequence (run.status=failed + run.ended), not a hang."""
     reset_engine_for_tests()
-    run_id = await _mk_running_run()
+    run_id = await mk_running_run()
 
     bus = PostgresEventBus(poll_interval=0.2)
     await bus.start()
