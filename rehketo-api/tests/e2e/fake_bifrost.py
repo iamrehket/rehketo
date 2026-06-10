@@ -16,6 +16,7 @@ switch profiles without restarting the server:
 - ``default``   — three streamed chunks "Hello ", "world", "!"
 - ``slow``      — ten chunks at 100 ms each (for cancel-mid-stream)
 - ``title-fail`` — second call (title generation) returns 500
+- ``marathon``  — forty chunks at 250 ms each (for live-resume/chaos)
 """
 
 from __future__ import annotations
@@ -44,6 +45,14 @@ _PROFILES: dict[str, dict[str, Any]] = {
         "chunks": ("Hi", "!"),
         "delay_s": 0.0,
         "title_fail": True,
+    },
+    "marathon": {
+        # 40 x 250 ms = 10 s stream: long enough for a second tab to open
+        # mid-stream (cold SPA open ≈ 3-5 s on CI) and for chaos kills; short
+        # enough for a 60 s per-spec timeout.
+        "chunks": tuple(f"tok{i} " for i in range(40)),
+        "delay_s": 0.25,
+        "title_fail": False,
     },
 }
 

@@ -36,6 +36,13 @@ export const test = base.extend<AuthFixtures>({
 	}
 });
 
+// The bifrost profile is process-global on the fake server. Resetting to
+// 'default' after every spec prevents a marathon-profile leak from blowing
+// a later spec's time budget.
+test.afterEach(async ({ request }) => {
+	await setBifrostProfile(request, 'default');
+});
+
 export { expect };
 
 /** Read the rehketo_csrf cookie and return it as the X-CSRF-Token header. */
@@ -46,10 +53,10 @@ export async function csrfHeaders(context: BrowserContext): Promise<Record<strin
 	return { 'X-CSRF-Token': csrf };
 }
 
-/** Switch the fake Bifrost into a named profile (default | slow | title-fail). */
+/** Switch the fake Bifrost into a named profile (default | slow | title-fail | marathon). */
 export async function setBifrostProfile(
 	request: APIRequestContext,
-	profile: 'default' | 'slow' | 'title-fail'
+	profile: 'default' | 'slow' | 'title-fail' | 'marathon'
 ): Promise<void> {
 	const bifrostUrl = process.env.REHKETO_BIFROST_URL;
 	if (!bifrostUrl) throw new Error('REHKETO_BIFROST_URL not set');
