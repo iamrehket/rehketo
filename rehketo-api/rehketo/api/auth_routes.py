@@ -97,9 +97,10 @@ async def login(
     # across the Entra hop without putting the path into the OAuth `state`
     # (which would leak it to the IdP logs).
     if next is not None and _is_safe_next(next):
-        # Percent-encode before storing: keeps raw path delimiters out of the
-        # cookie value (CodeQL py/cookie-injection sanitizer) and is reversed
-        # by unquote() in the callback.
+        # Percent-encode before storing: escapes cookie-metadata delimiters
+        # (`;`, `,`, CR/LF) that could otherwise inject extra Set-Cookie
+        # attributes; `/` is left raw. Reversed by unquote() in the callback.
+        # CodeQL py/cookie-injection sanitizer.
         _set_oauth_cookie(resp, OAUTH_NEXT_COOKIE, quote(next), secure=s.cookie_secure)
     return resp
 
