@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, FastAPI
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import FileResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.staticfiles import StaticFiles
+from starlette.status import HTTP_404_NOT_FOUND
 
 # psycopg3 async cannot use Windows's default ProactorEventLoop. Force the
 # SelectorEventLoop policy at import time so uvicorn picks it up when it
@@ -20,6 +22,9 @@ if sys.platform == "win32":
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    from starlette.responses import Response
+    from starlette.types import Scope
 
 from rehketo.agent.sweep import sweep_abandoned_runs
 from rehketo.api.errors import install_error_handlers
@@ -133,6 +138,21 @@ def create_app() -> FastAPI:
     return app
 
 
+class _SPAStaticFiles(StaticFiles):
+    """Serve the built SvelteKit bundle, falling back to index.html for any
+    path Starlette can't resolve to a real file — so client-side routes (like
+    /c/<uuid>) survive a full page load. StaticFiles does its own realpath-based
+    containment check, so user input never touches a path join we own."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == HTTP_404_NOT_FOUND:
+                return await super().get_response("index.html", scope)
+            raise
+
+
 def _mount_ui_static_bundle_if_configured(app: FastAPI) -> None:
     """When UI_STATIC_DIR points at a built SvelteKit bundle, serve it at /
     with SPA fallback: real files under the dir resolve directly, anything
@@ -159,14 +179,7 @@ def _mount_ui_static_bundle_if_configured(app: FastAPI) -> None:
         )
         return
 
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def _ui_catchall(full_path: str) -> FileResponse:
-        if full_path:
-            candidate = (ui_dir / full_path).resolve()
-            # Reject traversal: candidate must remain under ui_dir.
-            if candidate.is_file() and candidate.is_relative_to(ui_dir.resolve()):
-                return FileResponse(candidate)
-        return FileResponse(index_html)
+    app.mount("/", _SPAStaticFiles(directory=ui_dir, html=True), name="ui")
 
 
 app = create_app()
