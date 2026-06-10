@@ -20,7 +20,9 @@
 // connection error triggers auto-reconnect resuming at the highest
 // sequence seen + 1 (no duplicates, no gaps). Backoff is exponential
 // (500ms/1s/2s, max 3 attempts); any received event refills the budget.
-// onError fires only after the budget is exhausted. A malformed frame
+// onError fires only after the budget is exhausted. onError (exhausted
+// budget) is followed by onEnded from the same close — consumers must
+// not read onEnded alone as clean completion. A malformed frame
 // is a transport fault on the same retry path (resume re-fetches it).
 // Errors after a terminal run.status remain the normal EOF tail —
 // close quietly, never reconnect.

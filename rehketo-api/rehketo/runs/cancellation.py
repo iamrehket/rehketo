@@ -32,7 +32,13 @@ async def request_cancel(db: AsyncSession, run_id: UUID) -> bool:
 
     The terminal guard lives in the UPDATE itself so a run finishing
     concurrently can never be stamped: returns False (and notifies nothing)
-    when the run was already terminal."""
+    when the run was already terminal.
+
+    Accepted gap: nothing re-reads the column today, so a NOTIFY that fires
+    while the owning process's control listener is mid-reconnect is lost —
+    recovery is the user cancelling again (a second request re-stamps and
+    re-notifies). The agent-worker milestone consumes the column properly
+    (claimed runs poll it), which closes the window."""
     result = cast(
         "CursorResult[tuple[()]]",
         await db.execute(

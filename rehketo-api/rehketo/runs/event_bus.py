@@ -129,4 +129,4 @@ class PostgresEventBus:
         # generator mid-fetch) can't cancel the session's cleanup and orphan
         # an idle-in-transaction connection; the query is short, so letting
         # it finish before the cancellation propagates is cheap.
-        return await asyncio.shield(asyncio.ensure_future(_query()))
+        return await asyncio.shield(_query())

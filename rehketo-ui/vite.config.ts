@@ -26,6 +26,9 @@ export default defineConfig({
 			},
 			{
 				extends: './vite.config.ts',
+				// Without this, `import { mount } from 'svelte'` resolves to the
+				// server runtime (exports.default), which refuses to mount.
+				resolve: { conditions: ['browser'] },
 				test: {
 					name: 'dom',
 					environment: 'jsdom',

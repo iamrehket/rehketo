@@ -86,9 +86,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     app.state.settings = settings
     logger.info("rehketo-api starting app_env=%s", settings.app_env)
-    await app.state.event_bus.start()
-    await app.state.control_listener.start()
     try:
+        await app.state.event_bus.start()
+        await app.state.control_listener.start()
         await sweep_abandoned_runs(app.state.event_bus)
         yield
     finally:

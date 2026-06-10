@@ -52,7 +52,11 @@
 				streamingText = (streamingText ?? '') + delta;
 			},
 			onMessageComplete: (message) => {
-				messages = [...messages, message];
+				// Replay can deliver a message.complete the conversation GET
+				// already included — dedupe by id rather than trust ordering.
+				if (!messages.some((m) => m.id === message.id)) {
+					messages = [...messages, message];
+				}
 				streamingText = null;
 			},
 			onStatus: (status, error) => {

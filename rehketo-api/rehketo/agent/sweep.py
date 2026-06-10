@@ -20,6 +20,11 @@ async def sweep_abandoned_runs(bus: RunEventBus) -> None:
     and publish the terminal event pair so any client still subscribed to a
     dead run's stream gets a clean close instead of a hang.
 
+    Deployment constraint: this sweep assumes it owns ALL non-terminal runs —
+    with multiple uvicorn workers, one worker restarting would force-fail
+    runs alive in its siblings. Single-process deployment remains required
+    until run ownership lands with the agent-worker split.
+
     Anything in those states at startup was abandoned by the previous
     process; the checkpointer may still have state but we do not resume yet
     (that arrives with the agent worker split).
