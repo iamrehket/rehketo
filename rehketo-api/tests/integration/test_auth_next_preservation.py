@@ -89,6 +89,56 @@ async def test_login_ignores_unsafe_next(
 
 
 @pytest.mark.asyncio
+async def test_login_percent_encodes_next_cookie(
+    settings_env: pytest.MonkeyPatch, db_url: str
+) -> None:
+    # A literal `;` in the path is a safe `next` (ord >= 0x20, no leading
+    # `//`), but stored raw it could inject a Set-Cookie attribute. login()
+    # must quote() it so the cookie holds `%3B`, never a raw `;`.
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://t",
+        follow_redirects=False,
+    ) as c:
+        r = await c.get("/auth/login", params={"next": "/c/a;b"})
+    assert r.status_code == 302
+    assert (r.cookies.get("rehketo_oauth_next") or "").strip('"') == "/c/a%3Bb"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_callback_decodes_percent_encoded_next_cookie(
+    settings_env: pytest.MonkeyPatch, db_url: str
+) -> None:
+    # Round-trip companion to the login test above: the cookie arrives in its
+    # stored encoded form (`%3B`) and the callback unquote()s it back to a
+    # literal `;` in the redirect, landing on the trusted UI origin.
+    token_url = f"{authority()}/oauth2/v2.0/token"
+    respx.post(token_url).mock(
+        return_value=respx.MockResponse(200, json=_token_response())
+    )
+
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://t",
+        follow_redirects=False,
+    ) as c:
+        r = await c.get(
+            "/auth/callback",
+            params={"code": "abc", "state": "s1"},
+            cookies={
+                "rehketo_oauth_state": "s1",
+                "rehketo_oauth_verifier": "v1",
+                "rehketo_oauth_next": "/c/a%3Bb",
+            },
+        )
+    assert r.status_code == 302
+    assert r.headers["location"] == "http://127.0.0.1:5173/c/a;b"
+
+
+@pytest.mark.asyncio
 @respx.mock
 async def test_callback_uses_next_cookie_when_safe(
     settings_env: pytest.MonkeyPatch, db_url: str
