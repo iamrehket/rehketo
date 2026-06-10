@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from typing import Annotated
-from urllib.parse import quote, urljoin, urlparse, urlunparse
+from urllib.parse import quote, unquote, urlparse, urlunparse
 from uuid import UUID, uuid4
 
 import httpx
@@ -56,21 +56,18 @@ def _set_oauth_cookie(
     )
 
 
-def _ui_origin() -> str:
-    """Origin (scheme://host[:port]) of the UI, derived from ui_post_login_url."""
-    parsed = urlparse(get_settings().ui_post_login_url)
-    return urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
-
-
 def _resolve_post_login_target(next_path: str | None) -> str:
     """Return an absolute URL on the UI origin.
 
-    `next_path` is trusted only when it is a relative path starting with a
-    single `/` — never a protocol-relative `//evil.com/...` or full URL.
-    Falls back to the configured `ui_post_login_url` on anything suspicious.
+    The scheme and host come *only* from the configured `ui_post_login_url`;
+    `next_path` (when it passes `_is_safe_next`) supplies just the path
+    component. Because the netloc is never derived from user input, the
+    redirect can't be steered off-origin. Falls back to the configured
+    post-login URL on anything suspicious.
     """
     if next_path and _is_safe_next(next_path):
-        return urljoin(_ui_origin() + "/", next_path.lstrip("/"))
+        origin = urlparse(get_settings().ui_post_login_url)
+        return urlunparse((origin.scheme, origin.netloc, next_path, "", "", ""))
     return get_settings().ui_post_login_url
 
 
@@ -100,7 +97,11 @@ async def login(
     # across the Entra hop without putting the path into the OAuth `state`
     # (which would leak it to the IdP logs).
     if next is not None and _is_safe_next(next):
-        _set_oauth_cookie(resp, OAUTH_NEXT_COOKIE, next, secure=s.cookie_secure)
+        # Percent-encode before storing: escapes cookie-metadata delimiters
+        # (`;`, `,`, CR/LF) that could otherwise inject extra Set-Cookie
+        # attributes; `/` is left raw. Reversed by unquote() in the callback.
+        # CodeQL py/cookie-injection sanitizer.
+        _set_oauth_cookie(resp, OAUTH_NEXT_COOKIE, quote(next), secure=s.cookie_secure)
     return resp
 
 
@@ -206,9 +207,8 @@ async def callback(
         ttl_minutes=s.session_ttl_minutes,
     )
 
-    resp = RedirectResponse(
-        _resolve_post_login_target(rehketo_oauth_next), status_code=302
-    )
+    next_path = unquote(rehketo_oauth_next) if rehketo_oauth_next is not None else None
+    resp = RedirectResponse(_resolve_post_login_target(next_path), status_code=302)
     ttl_seconds = s.session_ttl_minutes * 60
     set_session_cookie(resp, str(session_id), max_age_seconds=ttl_seconds)
     set_csrf_cookie(

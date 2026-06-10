@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -19,7 +21,7 @@ async def test_login_redirects_to_entra(
         r = await c.get("/auth/login")
     assert r.status_code == 302
     loc = r.headers["location"]
-    assert "login.microsoftonline.com" in loc
+    assert urlparse(loc).hostname == "login.microsoftonline.com"
     assert "client_id=cid" in loc
     assert "redirect_uri=" in loc
     assert "code_challenge=" in loc
