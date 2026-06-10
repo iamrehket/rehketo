@@ -518,22 +518,6 @@
               ],
               "title": "Rehketo Oauth Verifier"
             }
-          },
-          {
-            "in": "cookie",
-            "name": "rehketo_oauth_next",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Rehketo Oauth Next"
-            }
           }
         ],
         "responses": {
