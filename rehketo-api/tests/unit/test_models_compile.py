@@ -6,6 +6,7 @@ def test_models_import_and_define_expected_tables() -> None:
         "users",
         "identities",
         "sessions",
+        "oauth_pending_logins",
         "connections",
         "user_roles",
         "conversations",

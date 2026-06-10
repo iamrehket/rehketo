@@ -69,6 +69,22 @@ class Session(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class PendingLogin(Base):
+    __tablename__ = "oauth_pending_logins"
+
+    # The random `state` token (secrets.token_urlsafe) that correlates a login
+    # redirect with its callback. Server-side home for the user-supplied `next`
+    # path so it never rides in a browser cookie.
+    state: Mapped[str] = mapped_column(Text, primary_key=True)
+    next_path: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class Connection(Base):
     __tablename__ = "connections"
 

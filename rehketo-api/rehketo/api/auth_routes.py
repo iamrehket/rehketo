@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from typing import Annotated
-from urllib.parse import quote, unquote, urlparse, urlunparse
+from urllib.parse import quote, urlparse, urlunparse
 from uuid import UUID, uuid4
 
 import httpx
@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002  # FastAPI needs runtime type for Depends()
 )
 
-from rehketo.auth import entra
+from rehketo.auth import entra, login_state
 from rehketo.auth import sessions as session_store
 from rehketo.auth.cookies import (
     SESSION_COOKIE,
@@ -35,7 +35,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 OAUTH_STATE_COOKIE = "rehketo_oauth_state"
 OAUTH_VERIFIER_COOKIE = "rehketo_oauth_verifier"
-OAUTH_NEXT_COOKIE = "rehketo_oauth_next"
 
 # First printable ASCII byte; anything below is a C0 control char and is
 # rejected from `?next=` paths (a control char can break out of a relative URL).
@@ -83,6 +82,7 @@ def _is_safe_next(next_path: str) -> bool:
 
 @router.get("/login")
 async def login(
+    db: Annotated[AsyncSession, Depends(db_session)],
     next: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
     s = get_settings()
@@ -93,15 +93,14 @@ async def login(
         resp, OAUTH_VERIFIER_COOKIE, start.code_verifier, secure=s.cookie_secure
     )
     # Carry the caller's intended post-login path through the OAuth round
-    # trip via a short-lived cookie. State-cookie-only preserves the flow
-    # across the Entra hop without putting the path into the OAuth `state`
-    # (which would leak it to the IdP logs).
+    # trip server-side, keyed by `state`. Keeping it out of the OAuth `state`
+    # param avoids leaking the path to the IdP logs.
     if next is not None and _is_safe_next(next):
-        # Percent-encode before storing: escapes cookie-metadata delimiters
-        # (`;`, `,`, CR/LF) that could otherwise inject extra Set-Cookie
-        # attributes; `/` is left raw. Reversed by unquote() in the callback.
-        # CodeQL py/cookie-injection sanitizer.
-        _set_oauth_cookie(resp, OAUTH_NEXT_COOKIE, quote(next), secure=s.cookie_secure)
+        # Persist the intended post-login path server-side, keyed by the login
+        # `state` token, so no user-supplied value ever rides in a cookie.
+        await login_state.create_pending_login(
+            db, state=start.state, next_path=next, ttl_seconds=600
+        )
     return resp
 
 
@@ -124,7 +123,6 @@ def _oauth_error_redirect(exc: httpx.HTTPStatusError) -> RedirectResponse:
     resp = RedirectResponse(target, status_code=302)
     resp.delete_cookie(OAUTH_STATE_COOKIE, path="/auth/")
     resp.delete_cookie(OAUTH_VERIFIER_COOKIE, path="/auth/")
-    resp.delete_cookie(OAUTH_NEXT_COOKIE, path="/auth/")
     return resp
 
 
@@ -175,7 +173,6 @@ async def callback(
     rehketo_oauth_verifier: Annotated[
         str | None, Cookie(alias=OAUTH_VERIFIER_COOKIE)
     ] = None,
-    rehketo_oauth_next: Annotated[str | None, Cookie(alias=OAUTH_NEXT_COOKIE)] = None,
 ) -> Response:
     if not rehketo_oauth_state or not rehketo_oauth_verifier:
         raise HTTPException(status_code=400, detail="missing oauth transient state")
@@ -207,7 +204,7 @@ async def callback(
         ttl_minutes=s.session_ttl_minutes,
     )
 
-    next_path = unquote(rehketo_oauth_next) if rehketo_oauth_next is not None else None
+    next_path = await login_state.consume_pending_login(db, state)
     resp = RedirectResponse(_resolve_post_login_target(next_path), status_code=302)
     ttl_seconds = s.session_ttl_minutes * 60
     set_session_cookie(resp, str(session_id), max_age_seconds=ttl_seconds)
@@ -217,7 +214,6 @@ async def callback(
     # Clear the transient OAuth cookies (must match path="/auth/" set at login)
     resp.delete_cookie(OAUTH_STATE_COOKIE, path="/auth/")
     resp.delete_cookie(OAUTH_VERIFIER_COOKIE, path="/auth/")
-    resp.delete_cookie(OAUTH_NEXT_COOKIE, path="/auth/")
     return resp
 
 
