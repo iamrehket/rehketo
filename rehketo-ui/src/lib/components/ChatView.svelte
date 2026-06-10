@@ -52,7 +52,11 @@
 				streamingText = (streamingText ?? '') + delta;
 			},
 			onMessageComplete: (message) => {
-				messages = [...messages, message];
+				// Replay can deliver a message.complete the conversation GET
+				// already included — dedupe by id rather than trust ordering.
+				if (!messages.some((m) => m.id === message.id)) {
+					messages = [...messages, message];
+				}
 				streamingText = null;
 			},
 			onStatus: (status, error) => {
@@ -93,6 +97,14 @@
 				resetStreaming();
 			}
 		});
+	}
+
+	// Reattach to an in-flight run on open: replay from sequence 0 rebuilds
+	// the streaming bubble, then live events continue. This is what makes the
+	// durable bus visible — start a run on one device, watch it on another.
+	// svelte-ignore state_referenced_locally
+	if (conversation.active_run_id) {
+		attachRun(conversation.active_run_id);
 	}
 
 	async function handleSend(text: string): Promise<void> {

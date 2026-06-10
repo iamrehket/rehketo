@@ -33,7 +33,8 @@ from rehketo.auth.csrf_middleware import CSRF_EXEMPT_PREFIXES, CSRFMiddleware
 from rehketo.auth.dependencies import AuthContext, resolve_session
 from rehketo.config import get_settings, get_ui_static_dir
 from rehketo.core.logging import get_logger
-from rehketo.runs.event_bus import InProcessEventBus
+from rehketo.runs.cancellation import RunControlListener
+from rehketo.runs.event_bus import PostgresEventBus
 from rehketo.runs.registry import get_registry
 
 logger = get_logger(__name__)
@@ -85,8 +86,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     app.state.settings = settings
     logger.info("rehketo-api starting app_env=%s", settings.app_env)
-    await sweep_abandoned_runs()
-    yield
+    try:
+        await app.state.event_bus.start()
+        await app.state.control_listener.start()
+        await sweep_abandoned_runs(app.state.event_bus)
+        yield
+    finally:
+        await app.state.control_listener.stop()
+        await app.state.event_bus.stop()
 
 
 def create_app() -> FastAPI:
@@ -105,8 +112,10 @@ def create_app() -> FastAPI:
     install_error_handlers(app)
     app.add_middleware(CSRFMiddleware)
 
-    app.state.event_bus = InProcessEventBus()
+    # Constructed here (no I/O); its LISTEN task starts in _lifespan.
+    app.state.event_bus = PostgresEventBus()
     app.state.task_registry = get_registry()
+    app.state.control_listener = RunControlListener(app.state.task_registry)
 
     from rehketo.api import auth_routes
     from rehketo.api import conversations as conversations_api

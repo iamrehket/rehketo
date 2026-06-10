@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -16,16 +17,67 @@ from langchain_core.messages import AIMessageChunk
 
 from rehketo.auth.csrf import issue_csrf_token
 from rehketo.auth.sessions import create_session
-from rehketo.db.models import Conversation, User, UserRole
+from rehketo.db import sessionmaker
+from rehketo.db.models import Conversation, Run, User, UserRole
+from rehketo.main import create_app
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 
+    from fastapi import FastAPI
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
+# --- App with a started event bus -------------------------------------------
+
+
+@asynccontextmanager
+async def live_app() -> AsyncIterator[FastAPI]:
+    """create_app() with its event bus + control listener started, like
+    _lifespan does.
+
+    httpx's ASGITransport never runs lifespan, and PostgresEventBus delivers
+    live wakes only from the LISTEN task started there — without it a
+    subscriber sees new events on the slow fallback re-poll, which loses to
+    drain_sse's timeout. The control listener is what makes POST /cancel
+    actually cancel the local task. Use this in any test that consumes SSE
+    while the run is still streaming, or cancels a run.
+    """
+    app = create_app()
+    await app.state.event_bus.start()
+    await app.state.control_listener.start()
+    try:
+        yield app
+    finally:
+        await app.state.control_listener.stop()
+        await app.state.event_bus.stop()
+
+
 # --- DB seed -----------------------------------------------------------------
+
+
+async def mk_running_run() -> str:
+    """Create user + conversation + a Run in status='running'; return run id."""
+    async with sessionmaker()() as db:
+        user = User(id=uuid4(), display_name="t", email=f"{uuid4().hex}@example.test")
+        conv = Conversation(id=uuid4(), user_id=user.id)
+        run = Run(
+            id=uuid4(),
+            conversation_id=conv.id,
+            user_id=user.id,
+            status="running",
+            model="test-model",
+        )
+        # No relationship() on these models, so SQLAlchemy won't order the
+        # inserts by FK — flush parent rows before their children.
+        db.add(user)
+        await db.flush()
+        db.add(conv)
+        await db.flush()
+        db.add(run)
+        await db.commit()
+        return str(run.id)
 
 
 async def seed_user_and_conv(

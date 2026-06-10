@@ -18,6 +18,7 @@ from rehketo.auth.sessions import create_session
 from rehketo.db.models import Conversation, Message, User, UserRole
 from rehketo.main import create_app
 from rehketo.runs.registry import reset_registry_for_tests
+from tests.integration._helpers import await_run_terminal, live_app
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
@@ -87,8 +88,12 @@ async def test_cancel_persists_partial_assistant_text(
     )
     csrf = issue_csrf_token(str(sid))
 
-    app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+    # live_app: cancel propagation now rides the control channel, so the test
+    # needs the RunControlListener that _lifespan/live_app starts.
+    async with (
+        live_app() as app,
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c,
+    ):
         r = await c.post(
             f"/conversations/{conv.id}/messages",
             cookies={SESSION_COOKIE: str(sid), CSRF_COOKIE: csrf},
@@ -106,7 +111,10 @@ async def test_cancel_persists_partial_assistant_text(
         )
         assert r2.status_code == 204
 
-        await asyncio.sleep(2.0)  # let finalizer complete
+        # Cancellation is asynchronous now; wait for the finalizer to land.
+        await await_run_terminal(
+            c, run_id, cookies={SESSION_COOKIE: str(sid)}, timeout_s=10
+        )
 
         detail = await c.get(
             f"/conversations/{conv.id}", cookies={SESSION_COOKIE: str(sid)}
@@ -152,8 +160,10 @@ async def test_fail_persists_partial_with_error(
     )
     csrf = issue_csrf_token(str(sid))
 
-    app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+    async with (
+        live_app() as app,
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c,
+    ):
         r = await c.post(
             f"/conversations/{conv.id}/messages",
             cookies={SESSION_COOKIE: str(sid), CSRF_COOKIE: csrf},
@@ -225,8 +235,10 @@ async def test_succeeded_run_message_has_succeeded_status(
     )
     csrf = issue_csrf_token(str(sid))
 
-    app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+    async with (
+        live_app() as app,
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c,
+    ):
         r = await c.post(
             f"/conversations/{conv.id}/messages",
             cookies={SESSION_COOKIE: str(sid), CSRF_COOKIE: csrf},

@@ -106,16 +106,24 @@ async def login(
 
 def _oauth_error_redirect(exc: httpx.HTTPStatusError) -> RedirectResponse:
     code = "token_exchange_failed"
+    description = ""
     with contextlib.suppress(ValueError):
         body = exc.response.json()
         if isinstance(body, dict):
             err = body.get("error")
             if isinstance(err, str) and err:
                 code = err
+            desc = body.get("error_description")
+            if isinstance(desc, str):
+                # Server-side only; carries the AADSTS code that pinpoints the
+                # cause (bad/expired secret, wrong app platform). Never sent to
+                # the browser — _that_ gets only the coarse `code`.
+                description = desc
     logger.warning(
-        "entra token exchange failed: status=%s code=%s",
+        "entra token exchange failed: status=%s code=%s description=%s",
         exc.response.status_code,
         code,
+        description,
     )
     s = get_settings()
     sep = "&" if "?" in s.ui_post_login_url else "?"

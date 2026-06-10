@@ -267,8 +267,9 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  #
 
     finally:
         # Single, guaranteed terminator. Suppress publish failures so a broken
-        # bus cannot mask the real exception or leave the SSE handler hanging.
-        # The bus has its own buffering; if publish raises here, the stream is
-        # already in trouble and there is nothing useful to do but log + move on.
+        # bus cannot mask the real exception. If this publish fails the DB is
+        # down — the run's own state writes have already failed the same way —
+        # and any still-attached subscriber will be closed out by the startup
+        # sweep's terminal events after the next restart.
         with contextlib.suppress(Exception):
             await bus.publish(str(run_id), {"type": "run.ended"})

@@ -76,6 +76,7 @@ export type MessageOut = {
 
 export type ConversationDetail = ConversationSummary & {
 	messages: MessageOut[];
+	active_run_id: string | null;
 };
 
 export type MessageKickoffOut = {

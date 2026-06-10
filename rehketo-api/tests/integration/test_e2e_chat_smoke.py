@@ -15,8 +15,8 @@ from httpx import ASGITransport, AsyncClient
 from langchain_core.messages import AIMessageChunk
 
 from rehketo.auth.cookies import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
-from rehketo.main import create_app
 from rehketo.runs.registry import reset_registry_for_tests
+from tests.integration._helpers import live_app
 
 if TYPE_CHECKING:
     import pytest
@@ -46,8 +46,10 @@ async def test_full_chat_turn(
     monkeypatch.setattr(run_mod, "build_agent", _fake_build_agent)
     monkeypatch.setattr(run_mod, "generate_title_if_needed", _no_title)
 
-    app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+    async with (
+        live_app() as app,
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c,
+    ):
         r = await c.post(
             "/auth/devonly/login",
             json={"email": "al@example.com", "roles": ["User"]},

@@ -1,22 +1,20 @@
-// Cancel a streaming reply mid-flight. Uses the fake Bifrost's `slow`
-// profile (10 chunks @ 100ms) so we have time to click Cancel.
+// Cancel a streaming reply mid-flight. Uses the fake Bifrost's `marathon`
+// profile (40 chunks @ 250 ms, ~10 s total) so we have a deterministic window
+// to click Cancel.
 //
-// TODO(e2e): the Cancel button visibility is gated by both `isStreaming`
-// (true while activeRunId is set) AND `auth.can('chat.cancel_run')` (the
-// Admin role grants it). Both should be true in this test, but the button
-// didn't appear within the timeout. Likely investigation paths:
-//   - Confirm the User/Admin role granted by devonly login includes
-//     'chat.cancel_run' in rehketo.permissions.roles.
-//   - Confirm /me/capabilities returns 'chat.cancel_run' in `actions`.
-//   - Check whether the SPA's auth.can store is hydrated before the
-//     test asserts (may need to wait for `/me/capabilities` to settle).
-//
-// Skipped for now; the framework is proven by chat.e2e.ts.
+// DIAGNOSIS (2026-06-10): permission chain verified sound end-to-end —
+// devonly login grants ['User','Admin'], both grant chat.cancel_run in
+// rehketo-api/rehketo/permissions/roles.py, /me/capabilities feeds auth.can,
+// and the root +layout.ts hydrates auth before any page renders. The original
+// skip predated the durable-bus rewrite; the ~1 s window from the old `slow`
+// profile (10 chunks @ 100 ms) was racing Playwright actionability before the
+// streaming stack was replaced.
 
-import { test, expect, setBifrostProfile } from './fixtures/auth';
+import { test, expect, assistantBubble, setBifrostProfile } from './fixtures/auth';
 
-test.skip('cancel mid-stream stops the reply', async ({ page, loggedInRequest }) => {
-	await setBifrostProfile(loggedInRequest, 'slow');
+test('cancel mid-stream stops the reply', async ({ page, loggedInRequest }) => {
+	test.setTimeout(60_000);
+	await setBifrostProfile(loggedInRequest, 'marathon');
 
 	await page.goto('/');
 	await page.getByRole('button', { name: /new chat/i }).click();
@@ -26,9 +24,15 @@ test.skip('cancel mid-stream stops the reply', async ({ page, loggedInRequest })
 	await composer.fill('please reply slowly');
 	await page.getByRole('button', { name: 'Send' }).click();
 
+	// Anchor: the stream is provably live before asserting the Cancel button.
+	await expect(assistantBubble(page)).toContainText(/tok\d+/);
+
 	const cancel = page.getByRole('button', { name: 'Cancel' });
 	await expect(cancel).toBeVisible();
 	await cancel.click();
 
-	await expect(page.getByText(/cancelled/i)).toBeVisible();
+	// Scoped to the bubble: an unscoped /cancelled/i could match elsewhere.
+	// Badge.svelte renders the label as "Cancelled" (capital C).
+	await expect(assistantBubble(page).getByText('Cancelled')).toBeVisible();
+	await expect(page.getByPlaceholder('Message Rehketo…')).toBeEnabled();
 });

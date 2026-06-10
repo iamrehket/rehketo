@@ -12,6 +12,13 @@ db:
 db-down:
     docker compose down
 
+# alembic reads DATABASE_URL from rehketo-api/.env; run after pulling a migration.
+# Apply pending DB migrations (run before `just api`).
+[working-directory("rehketo-api")]
+migrate:
+    @test -f .env || { echo "rehketo-api/.env missing — cp .env.example .env"; exit 1; }
+    uv run alembic upgrade head
+
 # Run the FastAPI backend on :8000 (foreground).
 [working-directory("rehketo-api")]
 api:

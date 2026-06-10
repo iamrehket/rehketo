@@ -36,6 +36,18 @@
       },
       "ConversationDetail": {
         "properties": {
+          "active_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Run Id"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
