@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from typing import Annotated
-from urllib.parse import quote, urlparse, urlunparse
+from urllib.parse import quote, unquote, urlparse, urlunparse
 from uuid import UUID, uuid4
 
 import httpx
@@ -97,7 +97,10 @@ async def login(
     # across the Entra hop without putting the path into the OAuth `state`
     # (which would leak it to the IdP logs).
     if next is not None and _is_safe_next(next):
-        _set_oauth_cookie(resp, OAUTH_NEXT_COOKIE, next, secure=s.cookie_secure)
+        # Percent-encode before storing: keeps raw path delimiters out of the
+        # cookie value (CodeQL py/cookie-injection sanitizer) and is reversed
+        # by unquote() in the callback.
+        _set_oauth_cookie(resp, OAUTH_NEXT_COOKIE, quote(next), secure=s.cookie_secure)
     return resp
 
 
@@ -203,9 +206,8 @@ async def callback(
         ttl_minutes=s.session_ttl_minutes,
     )
 
-    resp = RedirectResponse(
-        _resolve_post_login_target(rehketo_oauth_next), status_code=302
-    )
+    next_path = unquote(rehketo_oauth_next) if rehketo_oauth_next is not None else None
+    resp = RedirectResponse(_resolve_post_login_target(next_path), status_code=302)
     ttl_seconds = s.session_ttl_minutes * 60
     set_session_cookie(resp, str(session_id), max_age_seconds=ttl_seconds)
     set_csrf_cookie(
