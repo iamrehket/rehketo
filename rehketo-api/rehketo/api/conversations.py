@@ -59,6 +59,12 @@ class MessageOut(BaseModel):
 
 class ConversationDetail(ConversationSummary):
     messages: list[MessageOut]
+    # In-flight run for this conversation (queued/running), newest first.
+    # The UI uses this to reattach to the live SSE stream on open.
+    # Best-effort: a run abandoned by a process crash stays queued/running
+    # until the next startup sweep, so this can briefly point at a dead run —
+    # the subscriber then just waits and the sweep's closure events end it.
+    active_run_id: UUID | None = None
 
 
 class ConversationPatch(BaseModel):
@@ -146,6 +152,17 @@ async def get_conversation(
             .order_by(Message.created_at)
         )
     ).all()
+    active_run_id = (
+        await db.execute(
+            select(Run.id)
+            .where(
+                Run.conversation_id == conv.id,
+                Run.status.in_(["queued", "running"]),
+            )
+            .order_by(Run.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
     # Treat in-flight runs (queued/running) as "no terminal status yet" on the
     # wire — the UI only uses run_status to render terminal-state badges.
     terminal = {"succeeded", "failed", "cancelled"}
@@ -154,6 +171,7 @@ async def get_conversation(
         title=conv.title,
         created_at=conv.created_at,
         updated_at=conv.updated_at,
+        active_run_id=active_run_id,
         messages=[
             MessageOut(
                 id=m.id,
