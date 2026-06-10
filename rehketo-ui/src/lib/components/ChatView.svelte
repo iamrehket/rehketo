@@ -95,6 +95,14 @@
 		});
 	}
 
+	// Reattach to an in-flight run on open: replay from sequence 0 rebuilds
+	// the streaming bubble, then live events continue. This is what makes the
+	// durable bus visible — start a run on one device, watch it on another.
+	// svelte-ignore state_referenced_locally
+	if (conversation.active_run_id) {
+		attachRun(conversation.active_run_id);
+	}
+
 	async function handleSend(text: string): Promise<void> {
 		// Optimistic user bubble (will be replaced with server's id once the
 		// POST resolves — matching ids keep reload semantics correct).

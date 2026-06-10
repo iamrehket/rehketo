@@ -5,8 +5,9 @@ import contextlib
 from typing import TYPE_CHECKING
 
 import pytest_asyncio
+from sqlalchemy import text
 
-from rehketo.db import reset_engine_for_tests
+from rehketo.db import reset_engine_for_tests, sessionmaker
 from rehketo.runs.event_bus import PostgresEventBus
 from tests.integration._helpers import mk_running_run
 
@@ -136,6 +137,30 @@ async def test_cross_instance_delivery(bus: PostgresEventBus) -> None:
         assert [e["type"] for e in received] == ["a", "b"]
     finally:
         await other.stop()
+
+
+async def test_subscriber_cancel_mid_fetch_leaves_pool_clean(
+    bus: PostgresEventBus,
+) -> None:
+    """Cancelling a subscriber must not orphan an idle-in-transaction
+    connection: the shield lets the in-flight fetch finish its cleanup."""
+    run_id = await mk_running_run()
+    await bus.publish(run_id, {"type": "tick"})
+
+    async def consume_forever() -> None:
+        async with contextlib.aclosing(bus.subscribe(run_id)) as stream:
+            async for _ in stream:
+                pass
+
+    task = asyncio.create_task(consume_forever())
+    await asyncio.sleep(0.05)  # let it get into the fetch/wait loop
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=10)
+
+    # The pool must be fully usable afterwards: a fresh session round-trips.
+    async with sessionmaker()() as db:
+        assert (await db.execute(text("SELECT 1"))).scalar_one() == 1
 
 
 async def test_events_survive_bus_restart(bus: PostgresEventBus) -> None:

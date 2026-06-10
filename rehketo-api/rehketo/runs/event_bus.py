@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections import defaultdict, deque
-from typing import TYPE_CHECKING, Protocol, cast
+from collections import defaultdict
+from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import text
 
@@ -23,58 +23,6 @@ class RunEventBus(Protocol):
         *,
         from_sequence: int | None = None,
     ) -> AsyncIterator[dict[str, object]]: ...
-
-
-class InProcessEventBus:
-    """asyncio.Queue-per-run bus with a bounded ring buffer for late subscribers.
-
-    Single-process only. The postgres LISTEN/NOTIFY implementation (fast-follow)
-    will be a drop-in replacement satisfying the same contract.
-    """
-
-    def __init__(self, *, buffer_size: int = 1024) -> None:
-        self._buffer_size = buffer_size
-        self._seq: dict[str, int] = defaultdict(int)
-        self._history: dict[str, deque[dict[str, object]]] = defaultdict(
-            lambda: deque(maxlen=self._buffer_size)
-        )
-        self._queues: dict[str, list[asyncio.Queue[dict[str, object]]]] = defaultdict(
-            list
-        )
-        self._lock = asyncio.Lock()
-
-    async def publish(self, run_id: str, event: dict[str, object]) -> None:
-        async with self._lock:
-            seq = self._seq[run_id]
-            self._seq[run_id] = seq + 1
-            enriched = {**event, "sequence": seq, "run_id": run_id}
-            self._history[run_id].append(enriched)
-            for q in list(self._queues[run_id]):
-                q.put_nowait(enriched)
-
-    async def subscribe(
-        self,
-        run_id: str,
-        *,
-        from_sequence: int | None = None,
-    ) -> AsyncIterator[dict[str, object]]:
-        q: asyncio.Queue[dict[str, object]] = asyncio.Queue()
-        async with self._lock:
-            # Replay buffered history from from_sequence onward
-            if self._history.get(run_id):
-                for e in self._history[run_id]:
-                    seq = cast("int", e["sequence"])
-                    if from_sequence is None or seq >= from_sequence:
-                        q.put_nowait(e)
-            self._queues[run_id].append(q)
-        try:
-            while True:
-                event = await q.get()
-                yield event
-        finally:
-            async with self._lock:
-                if q in self._queues[run_id]:
-                    self._queues[run_id].remove(q)
 
 
 EVENTS_CHANNEL = "run_events"
@@ -165,13 +113,20 @@ class PostgresEventBus:
     async def _fetch_after(
         self, run_id: str, last: int
     ) -> list[tuple[int, dict[str, object]]]:
-        async with sessionmaker()() as db:
-            rows = await db.execute(
-                text(
-                    "SELECT sequence, payload FROM run_events "
-                    "WHERE run_id = :rid AND sequence > :last "
-                    "ORDER BY sequence"
-                ),
-                {"rid": run_id, "last": last},
-            )
-            return [(row.sequence, row.payload) for row in rows]
+        async def _query() -> list[tuple[int, dict[str, object]]]:
+            async with sessionmaker()() as db:
+                rows = await db.execute(
+                    text(
+                        "SELECT sequence, payload FROM run_events "
+                        "WHERE run_id = :rid AND sequence > :last "
+                        "ORDER BY sequence"
+                    ),
+                    {"rid": run_id, "last": last},
+                )
+                return [(row.sequence, row.payload) for row in rows]
+
+        # Shielded so a client disconnect (CancelledError thrown into the
+        # generator mid-fetch) can't cancel the session's cleanup and orphan
+        # an idle-in-transaction connection; the query is short, so letting
+        # it finish before the cancellation propagates is cheap.
+        return await asyncio.shield(asyncio.ensure_future(_query()))
