@@ -61,6 +61,34 @@ def _sa_url(pg: PostgresContainer) -> str:
     return raw.replace("@localhost:", "@127.0.0.1:")
 
 
+def e2e_env(*, port: int, db_url: str, bifrost_url: str, ui_dir: str) -> dict[str, str]:
+    """Every env var the api needs for an e2e boot.
+
+    Shared by the session uvicorn-in-thread fixture below and the chaos
+    subprocess fixture (tests/e2e/fixtures/chaos_api.py) so the two stacks
+    can't drift. A fresh fernet key is generated per call — each consumer
+    is its own isolated session world.
+    """
+    fernet_key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
+    return {
+        "APP_ENV": "e2e",
+        "DATABASE_URL": db_url,
+        "SESSION_ENCRYPTION_KEY": fernet_key,
+        "CSRF_SIGNING_KEY": "x" * 64,
+        "ENTRA_TENANT_ID": "tid",
+        "ENTRA_CLIENT_ID": "cid",
+        "ENTRA_CLIENT_SECRET": "secret",
+        "ENTRA_REDIRECT_URI": f"http://127.0.0.1:{port}/auth/callback",
+        "UI_POST_LOGIN_URL": "/",
+        "DEVONLY_LOGIN_ENABLED": "true",
+        "BIFROST_BASE_URL": bifrost_url,
+        "BIFROST_API_KEY": "test-key",
+        "AGENT_MODEL": "claude-sonnet-4-6",
+        "COOKIE_SECURE": "false",
+        "UI_STATIC_DIR": ui_dir,
+    }
+
+
 def _wait_http_200(url: str, timeout_s: float = 30.0) -> None:
     deadline = time.monotonic() + timeout_s
     last_err: BaseException | None = None
@@ -90,26 +118,16 @@ def api_server(
 
     port = free_port()
     db_url = _sa_url(_pg)
-    fernet_key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
 
     # Env must be set BEFORE importing rehketo.main (Settings cache, db engine).
-    monkeypatch_session.setenv("APP_ENV", "e2e")
-    monkeypatch_session.setenv("DATABASE_URL", db_url)
-    monkeypatch_session.setenv("SESSION_ENCRYPTION_KEY", fernet_key)
-    monkeypatch_session.setenv("CSRF_SIGNING_KEY", "x" * 64)
-    monkeypatch_session.setenv("ENTRA_TENANT_ID", "tid")
-    monkeypatch_session.setenv("ENTRA_CLIENT_ID", "cid")
-    monkeypatch_session.setenv("ENTRA_CLIENT_SECRET", "secret")
-    monkeypatch_session.setenv(
-        "ENTRA_REDIRECT_URI", f"http://127.0.0.1:{port}/auth/callback"
+    env = e2e_env(
+        port=port,
+        db_url=db_url,
+        bifrost_url=fake_bifrost.base_url,
+        ui_dir=str(ui_build),
     )
-    monkeypatch_session.setenv("UI_POST_LOGIN_URL", "/")
-    monkeypatch_session.setenv("DEVONLY_LOGIN_ENABLED", "true")
-    monkeypatch_session.setenv("BIFROST_BASE_URL", fake_bifrost.base_url)
-    monkeypatch_session.setenv("BIFROST_API_KEY", "test-key")
-    monkeypatch_session.setenv("AGENT_MODEL", "claude-sonnet-4-6")
-    monkeypatch_session.setenv("COOKIE_SECURE", "false")
-    monkeypatch_session.setenv("UI_STATIC_DIR", str(ui_build))
+    for key, value in env.items():
+        monkeypatch_session.setenv(key, value)
 
     from rehketo.config import get_settings
 

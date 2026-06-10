@@ -18,6 +18,10 @@ import pytest
 
 from tests.e2e.fixtures.api_server import api_server  # noqa: F401  # re-export
 from tests.e2e.fixtures.bifrost_server import fake_bifrost  # noqa: F401  # re-export
+from tests.e2e.fixtures.chaos_api import (  # noqa: F401  # re-export
+    chaos_api,
+    chaos_db,
+)
 from tests.e2e.fixtures.ui_build import ui_build  # noqa: F401  # re-export
 
 if TYPE_CHECKING:
