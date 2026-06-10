@@ -18,11 +18,18 @@ ordering, this one wins.
 
 ## Sequenced milestones
 
-### M1 — Durable event bus + stream resumption
+### M1 — Durable event bus + stream resumption + cross-process cancellation
 
 Replace the in-process event bus with postgres LISTEN/NOTIFY, persisting events to
-the existing `run_events` table, and add SSE resume-from-sequence on reconnect.
-Today an API restart or deploy kills any in-flight stream with no recovery.
+the existing `run_events` table; add SSE resume-from-sequence on reconnect; move
+cancellation to a durable column + NOTIFY so it works across processes and the
+deployment is multi-worker safe. Today an API restart or deploy kills any
+in-flight stream with no recovery.
+
+Scope decision: cross-process cancellation was pulled into M1 (rather than
+deferred to the worker split) because we have not deployed yet — structural
+changes are cheapest now, and deferring means re-touching the same code after
+deploy. Spec: `2026-06-10-durable-event-bus-design.md`.
 
 Why first: reliability is the family's first impression, and every later feature —
 tool events especially — rides on this transport.
@@ -49,12 +56,35 @@ Includes a deliberately simple per-role tool allowlist enforced through the exis
 permissions gate (`rehketo/permissions/check.py`). "Who can invoke what" cannot wait
 for OpenFGA once tools exist.
 
-Out of scope: MCP apps (M5), user-authored servers, per-user server configuration.
+Out of scope: MCP apps (M6), user-authored servers, per-user server configuration.
 fastmcp may serve as the client library and, later, as the framework for any
 built-in tools we author — those would register through the same registry, not a
 parallel path.
 
-### M4 — Family onboarding
+### M4 — Agent worker split
+
+Move run execution out of the API into a dedicated worker process. The API only
+inserts `runs` rows (`status='queued'`) and serves streams; the worker claims
+queued runs (`SELECT ... FOR UPDATE SKIP LOCKED` + NOTIFY doorbell), executes the
+LangGraph graph, and publishes to the durable bus. API and worker share no memory
+— the `runs` table is the queue, `run_events` is the stream, the M1 cancel channel
+works unchanged.
+
+What it buys: runs survive API deploys entirely; worker restarts can resume runs
+from LangGraph checkpoints (`thread_id=run_id`) instead of failing them; agent and
+tool execution is isolated from the auth-holding API process — which matters once
+M3 puts tool calls inside runs; `queued` gains real semantics (concurrency caps,
+backpressure).
+
+The hard design problem to solve in its spec: resumption reconciliation — what
+happens to a partially-streamed assistant message and already-published events
+when a run resumes from a checkpoint.
+
+Why here: M1 builds the seam it stands on; M3 makes runs long enough (tool calls)
+for deploy-survival to matter; doing it before family onboarding lands the
+structural change before real users — the same pre-deploy logic as M1's scope.
+
+### M5 — Family onboarding
 
 Invite family into the Entra tenant (guest or member accounts) and onboard them.
 Mostly ops, not code; budget for small UX fixes that surface from real first-time
@@ -66,7 +96,7 @@ considered and rejected — weeks of auth work versus an afternoon of tenant adm
 and multi-IdP's real design driver (account linking) arrives with friends, not
 family.
 
-### M5 — MCP apps
+### M6 — MCP apps
 
 Interactive UI widgets rendered in chat: sandboxed iframe + postMessage bridge in
 the SvelteKit UI. Security-sensitive and large; gets its own design pass.
