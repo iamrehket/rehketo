@@ -287,7 +287,11 @@ from rehketo.runs.event_bus import PostgresEventBus
 
 
 @pytest_asyncio.fixture
-async def bus(db_url: str) -> AsyncIterator[PostgresEventBus]:
+async def bus(
+    settings_env: object, db_url: str
+) -> AsyncIterator[PostgresEventBus]:
+    # settings_env is required: get_settings() needs the full env, and CI has
+    # no .env file — db_url alone only sets DATABASE_URL.
     reset_engine_for_tests()
     b = PostgresEventBus(poll_interval=0.2)
     await b.start()
@@ -370,7 +374,7 @@ async def test_isolation_between_runs(bus: PostgresEventBus) -> None:
     assert e2[0]["type"] == "tock"
 
 
-async def test_cross_instance_delivery(bus: PostgresEventBus, db_url: str) -> None:
+async def test_cross_instance_delivery(bus: PostgresEventBus) -> None:
     """Publish through one bus instance, receive through another — proves
     NOTIFY wiring between independent listener connections, the multi-process
     case in miniature."""
@@ -618,7 +622,9 @@ async def _mk_running_run() -> str:
         return str(run.id)
 
 
-async def test_sweep_publishes_closure_events(db_url: str) -> None:
+async def test_sweep_publishes_closure_events(
+    settings_env: object, db_url: str
+) -> None:
     """A client reconnecting to a dead run's stream must get the normal
     terminal sequence (run.status=failed + run.ended), not a hang."""
     reset_engine_for_tests()
@@ -735,7 +741,9 @@ from rehketo.runs.cancellation import RunControlListener, request_cancel
 from rehketo.runs.registry import RunTaskRegistry
 
 
-async def test_cancel_reaches_task_via_control_channel(db_url: str) -> None:
+async def test_cancel_reaches_task_via_control_channel(
+    settings_env: object, db_url: str
+) -> None:
     """The cancel request travels: DB column + NOTIFY -> listener -> registry
     -> task.cancel(). The requester shares no memory with the task holder —
     this is the cross-process path in miniature."""
@@ -1267,7 +1275,42 @@ In `ChatView.svelte`, after the `attachRun` function definition, add a one-time 
 Run: `pnpm run lint && pnpm run check && pnpm run test:unit -- --run`
 Expected: clean / PASS
 
-- [ ] **Step 3: Delete `InProcessEventBus`**
+- [ ] **Step 3: Shield `_fetch_after` cleanup against client-disconnect cancellation**
+
+Review finding from Task 4 (verified against SQLAlchemy 2.0.50 + psycopg 3.3.4: the
+psycopg dialect has no `terminate`, so a `CancelledError` landing inside
+`AsyncSession.__aexit__` can orphan an `[INTRANS]` pooled connection when an SSE
+client disconnects mid-fetch). In `rehketo/runs/event_bus.py::_fetch_after`, shield
+the session work so cancellation cannot strand the connection:
+
+```python
+    async def _fetch_after(
+        self, run_id: str, last: int
+    ) -> list[tuple[int, dict[str, object]]]:
+        async def _query() -> list[tuple[int, dict[str, object]]]:
+            async with sessionmaker()() as db:
+                rows = await db.execute(
+                    text(
+                        "SELECT sequence, payload FROM run_events "
+                        "WHERE run_id = :rid AND sequence > :last "
+                        "ORDER BY sequence"
+                    ),
+                    {"rid": run_id, "last": last},
+                )
+                return [(row.sequence, row.payload) for row in rows]
+
+        # Shielded so a client disconnect (CancelledError thrown into the
+        # generator mid-fetch) can't cancel the session's cleanup and orphan
+        # an idle-in-transaction connection; the query is short, so letting
+        # it finish before the cancellation propagates is cheap.
+        return await asyncio.shield(asyncio.ensure_future(_query()))
+```
+
+(Cancellation still propagates to the subscriber after the shield completes —
+`asyncio.shield` re-raises CancelledError once awaited. Verify with the existing
+test suite plus a targeted test if practical.)
+
+- [ ] **Step 3b: Delete `InProcessEventBus`**
 
 In `rehketo/runs/event_bus.py`: delete the `InProcessEventBus` class and any imports it alone used (`deque`, possibly `cast`). Keep the `RunEventBus` protocol and `PostgresEventBus`. Delete `tests/unit/test_event_bus_contract.py` (its coverage lives in `tests/integration/test_event_bus_postgres.py`).
 

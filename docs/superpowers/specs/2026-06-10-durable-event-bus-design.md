@@ -17,8 +17,11 @@ structural fix.
 
 - Events survive process restarts; any process can serve any run's stream.
 - Clients reconnect and resume from the last sequence they saw.
-- Cancellation works regardless of which process owns the run — safe to run
-  multiple uvicorn workers.
+- Cancellation works regardless of which process owns the run. (Note recorded
+  at implementation: the *cancellation machinery* is multi-process safe, but
+  the startup sweep still assumes it owns all non-terminal runs — deployment
+  stays single-process until run ownership lands with the agent-worker split.
+  See `sweep_abandoned_runs`'s docstring.)
 - A client subscribed to a run that died with its process gets a clean close, not
   a hang.
 
@@ -57,7 +60,9 @@ subscriber catches any missed notification.
 per-subscriber asyncio queues by run_id. Not one connection per subscriber —
 LISTEN holds a dedicated connection, and per-subscriber connections would exhaust
 the pool. The listener task reconnects with backoff if its connection drops;
-subscribers fall back to the re-poll interval meanwhile.
+subscribers fall back to the re-poll interval meanwhile. (Implementation note:
+the reconnect delay is a fixed short constant, not exponential backoff — one
+local postgres, nothing to be polite to.)
 
 Replay of finished runs works with no special casing: subscribe reads all rows
 including the final `run.ended`, and the SSE handler closes on it as today.
@@ -73,6 +78,11 @@ registry survives as a process-internal detail.
 
 If no process owns the run (it died in a restart), the startup sweep has already
 failed it or will; the 409-on-terminal check in the handler is unchanged.
+
+Accepted gap (recorded at implementation): nothing re-reads
+`cancel_requested_at` yet, so a NOTIFY landing while the owning process's
+control listener is mid-reconnect is lost; recovery is cancelling again. The
+agent-worker milestone consumes the column properly and closes the window.
 
 ### Startup sweep publishes closure
 
