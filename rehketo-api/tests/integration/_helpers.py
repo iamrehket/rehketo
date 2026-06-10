@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -17,12 +18,35 @@ from langchain_core.messages import AIMessageChunk
 from rehketo.auth.csrf import issue_csrf_token
 from rehketo.auth.sessions import create_session
 from rehketo.db.models import Conversation, User, UserRole
+from rehketo.main import create_app
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 
+    from fastapi import FastAPI
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+# --- App with a started event bus -------------------------------------------
+
+
+@asynccontextmanager
+async def live_app() -> AsyncIterator[FastAPI]:
+    """create_app() with its event bus started, like _lifespan does.
+
+    httpx's ASGITransport never runs lifespan, and PostgresEventBus delivers
+    live wakes only from the LISTEN task started there — without it a
+    subscriber sees new events on the slow fallback re-poll, which loses to
+    drain_sse's timeout. Use this in any test that consumes SSE while the
+    run is still streaming.
+    """
+    app = create_app()
+    await app.state.event_bus.start()
+    try:
+        yield app
+    finally:
+        await app.state.event_bus.stop()
 
 
 # --- DB seed -----------------------------------------------------------------

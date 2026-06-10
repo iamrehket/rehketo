@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID  # noqa: TC003  # used at runtime in Pydantic model + route path
@@ -79,15 +80,20 @@ async def run_events(
     bus = request.app.state.event_bus
 
     async def _stream() -> AsyncIterator[dict[str, str]]:
-        async for event in bus.subscribe(str(run_id), from_sequence=from_sequence):
-            yield _encode_sse_event(event)
-            # The agent publishes run.ended as the last event on every
-            # terminal path (succeeded / failed / cancelled). run.status
-            # alone is NOT a stream terminator — succeeded in particular
-            # fires before title generation, so closing on it would drop
-            # the subsequent conversation.updated.
-            if event.get("type") == "run.ended":
-                return
+        # aclosing makes the subscription's cleanup run when this generator
+        # exits, instead of whenever GC finalizes it.
+        async with contextlib.aclosing(
+            bus.subscribe(str(run_id), from_sequence=from_sequence)
+        ) as events:
+            async for event in events:
+                yield _encode_sse_event(event)
+                # The agent publishes run.ended as the last event on every
+                # terminal path (succeeded / failed / cancelled). run.status
+                # alone is NOT a stream terminator — succeeded in particular
+                # fires before title generation, so closing on it would drop
+                # the subsequent conversation.updated.
+                if event.get("type") == "run.ended":
+                    return
 
     return EventSourceResponse(_stream())
 

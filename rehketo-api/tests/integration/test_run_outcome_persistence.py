@@ -18,6 +18,7 @@ from rehketo.auth.sessions import create_session
 from rehketo.db.models import Conversation, Message, User, UserRole
 from rehketo.main import create_app
 from rehketo.runs.registry import reset_registry_for_tests
+from tests.integration._helpers import live_app
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
@@ -152,8 +153,10 @@ async def test_fail_persists_partial_with_error(
     )
     csrf = issue_csrf_token(str(sid))
 
-    app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+    async with (
+        live_app() as app,
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c,
+    ):
         r = await c.post(
             f"/conversations/{conv.id}/messages",
             cookies={SESSION_COOKIE: str(sid), CSRF_COOKIE: csrf},
@@ -225,8 +228,10 @@ async def test_succeeded_run_message_has_succeeded_status(
     )
     csrf = issue_csrf_token(str(sid))
 
-    app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+    async with (
+        live_app() as app,
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c,
+    ):
         r = await c.post(
             f"/conversations/{conv.id}/messages",
             cookies={SESSION_COOKIE: str(sid), CSRF_COOKIE: csrf},
