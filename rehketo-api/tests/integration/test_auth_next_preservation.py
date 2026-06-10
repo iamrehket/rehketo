@@ -141,6 +141,38 @@ async def test_callback_uses_pending_login_next(
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_login_callback_full_round_trip(
+    settings_env: pytest.MonkeyPatch, db_url: str
+) -> None:
+    """Drive login's own generated state through to the callback: the state
+    token login stores in the cookie must be the same key the callback consumes
+    the pending-login row by."""
+    token_url = f"{authority()}/oauth2/v2.0/token"
+    respx.post(token_url).mock(
+        return_value=respx.MockResponse(200, json=_token_response())
+    )
+
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://t",
+        follow_redirects=False,
+    ) as c:
+        login_resp = await c.get("/auth/login", params={"next": "/c/round-trip"})
+        assert login_resp.status_code == 302
+        state = c.cookies.get("rehketo_oauth_state")
+        assert state
+
+        callback_resp = await c.get(
+            "/auth/callback", params={"code": "abc", "state": state}
+        )
+
+    assert callback_resp.status_code == 302
+    assert callback_resp.headers["location"] == "http://127.0.0.1:5173/c/round-trip"
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_callback_rejects_unsafe_pending_next(
     settings_env: pytest.MonkeyPatch, db_url: str, db: AsyncSession
 ) -> None:
