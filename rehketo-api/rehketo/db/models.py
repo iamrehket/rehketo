@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     ARRAY,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -125,6 +126,25 @@ class UserPreferences(Base):
         PGUUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
     )
     custom_instructions: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class McpServer(Base):
+    __tablename__ = "mcp_servers"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    auth_token_ct: Mapped[bytes | None] = mapped_column(LargeBinary)
+    allowed_roles: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
