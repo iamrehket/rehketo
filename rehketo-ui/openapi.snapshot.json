@@ -245,6 +245,7 @@
           "auth_token": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -368,6 +369,7 @@
           "auth_token": {
             "anyOf": [
               {
+                "minLength": 1,
                 "type": "string"
               },
               {

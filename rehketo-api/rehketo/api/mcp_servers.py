@@ -26,7 +26,7 @@ _NAME_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
 class McpServerCreate(BaseModel):
     name: str = Field(pattern=_NAME_PATTERN)
     url: HttpUrl
-    auth_token: str | None = None
+    auth_token: str | None = Field(default=None, min_length=1)
     allowed_roles: list[str]
     enabled: bool = True
 
@@ -36,7 +36,7 @@ class McpServerPatch(BaseModel):
     # instead. auth_token: absent = unchanged, null = clear (distinguished
     # via model_fields_set).
     url: HttpUrl | None = None
-    auth_token: str | None = None
+    auth_token: str | None = Field(default=None, min_length=1)
     allowed_roles: list[str] | None = None
     enabled: bool | None = None
 

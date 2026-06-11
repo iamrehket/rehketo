@@ -135,3 +135,42 @@ async def test_bad_url_is_422(settings_env, db_url, db) -> None:
             **_auth(sid, csrf),
         )
     assert r.status_code == 422
+
+
+async def test_non_slug_name_is_422(settings_env, db_url, db) -> None:
+    sid, csrf = await _seed_session(db)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            "/admin/mcp-servers",
+            json={**_CREATE_BODY, "name": "My Server"},
+            **_auth(sid, csrf),
+        )
+    assert r.status_code == 422
+
+
+async def test_empty_auth_token_is_422(settings_env, db_url, db) -> None:
+    sid, csrf = await _seed_session(db)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            "/admin/mcp-servers",
+            json={**_CREATE_BODY, "auth_token": ""},
+            **_auth(sid, csrf),
+        )
+    assert r.status_code == 422
+
+
+async def test_unknown_id_patch_and_delete_are_404(settings_env, db_url, db) -> None:
+    sid, csrf = await _seed_session(db)
+    app = create_app()
+    unknown = str(uuid4())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.patch(
+            f"/admin/mcp-servers/{unknown}",
+            json={"enabled": False},
+            **_auth(sid, csrf),
+        )
+        assert r.status_code == 404
+        r = await c.delete(f"/admin/mcp-servers/{unknown}", **_auth(sid, csrf))
+        assert r.status_code == 404
