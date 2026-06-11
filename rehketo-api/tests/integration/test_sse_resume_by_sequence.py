@@ -49,7 +49,9 @@ class _SlowAgent:
             yield (chunk, {"langgraph_node": "agent"})
 
 
-async def _fake_build_agent(run_id: str) -> AsyncIterator[_SlowAgent]:
+async def _fake_build_agent(
+    run_id: str, system_prompt: str
+) -> AsyncIterator[_SlowAgent]:
     yield _SlowAgent()
 
 

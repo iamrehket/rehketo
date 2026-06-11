@@ -118,6 +118,18 @@ class UserRole(Base):
     role: Mapped[str] = mapped_column(Text, primary_key=True)
 
 
+class UserPreferences(Base):
+    __tablename__ = "user_preferences"
+
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
+    )
+    custom_instructions: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 

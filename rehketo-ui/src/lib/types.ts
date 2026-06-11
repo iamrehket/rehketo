@@ -46,6 +46,11 @@ export type CapabilitiesOut = {
 	actions: Capability[];
 };
 
+// Matches rehketo-api/rehketo/api/me.py PreferencesOut.
+export type PreferencesOut = {
+	custom_instructions: string;
+};
+
 export type ConversationSummary = {
 	id: string;
 	title: string | null;

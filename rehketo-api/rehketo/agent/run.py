@@ -11,10 +11,11 @@ from sqlalchemy import select, update
 
 from rehketo.agent.events import transform_chunk
 from rehketo.agent.graph import build_agent
+from rehketo.agent.prompt import assemble_system_prompt
 from rehketo.agent.title import generate_title_if_needed
 from rehketo.core.logging import get_logger
 from rehketo.db import sessionmaker
-from rehketo.db.models import Conversation, Message, Run
+from rehketo.db.models import Conversation, Message, Run, UserPreferences
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,8 +29,9 @@ async def _load_history(
     db: AsyncSession, conversation_id: UUID
 ) -> list[AIMessage | HumanMessage | SystemMessage]:
     """Load prior user/assistant turns for the agent. The system prompt is
-    set by `build_agent` via create_deep_agent(system_prompt=...); do NOT
-    prepend one here or the model sees the same prompt twice."""
+    assembled in run_agent and passed to build_agent via
+    create_deep_agent(system_prompt=...); do NOT prepend one here or the
+    model sees the same prompt twice."""
     msgs = (
         (
             await db.execute(
@@ -65,28 +67,46 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  #
     state-transition events (``run.status=…``) and persistence; the
     terminator is the orchestrator's responsibility, not each branch's.
     """
+    # Bind only what the failure/cancel branches and the terminator need
+    # before the outer `try` starts, so any later error — including the
+    # status flip, history load, or preferences fetch below — finalizes the
+    # run instead of stranding it in 'running'. If THIS load fails there is
+    # genuinely nothing to finalize.
     async with sessionmaker()() as db:
         run = (await db.execute(select(Run).where(Run.id == run_id))).scalar_one()
         conversation_id: UUID = run.conversation_id
-
-        await db.execute(
-            update(Run)
-            .where(Run.id == run_id)
-            .values(
-                status="running",
-                started_at=datetime.now(UTC),
-            )
-        )
-        await db.commit()
-        await bus.publish(str(run_id), {"type": "run.status", "status": "running"})
-
-        history = await _load_history(db, conversation_id)
+        user_id: UUID = run.user_id
 
     assembled_text = ""
 
     try:
         try:
-            async for agent in build_agent(str(run_id)):
+            async with sessionmaker()() as db:
+                await db.execute(
+                    update(Run)
+                    .where(Run.id == run_id)
+                    .values(
+                        status="running",
+                        started_at=datetime.now(UTC),
+                    )
+                )
+                await db.commit()
+                await bus.publish(
+                    str(run_id), {"type": "run.status", "status": "running"}
+                )
+
+                history = await _load_history(db, conversation_id)
+                prefs = (
+                    await db.execute(
+                        select(UserPreferences).where(
+                            UserPreferences.user_id == user_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                custom_instructions = prefs.custom_instructions if prefs else None
+            system_prompt = assemble_system_prompt(custom_instructions)
+
+            async for agent in build_agent(str(run_id), system_prompt):
                 async for chunk in agent.astream(
                     {"messages": history},
                     config={"configurable": {"thread_id": str(run_id)}},

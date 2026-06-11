@@ -38,7 +38,9 @@ class _PartialThenHangAgent:
             yield  # pragma: no cover
 
 
-async def _fake_build_agent(run_id: str) -> AsyncIterator[_PartialThenHangAgent]:
+async def _fake_build_agent(
+    run_id: str, system_prompt: str
+) -> AsyncIterator[_PartialThenHangAgent]:
     yield _PartialThenHangAgent()
 
 
@@ -51,7 +53,9 @@ class _RaisingAgent:
         raise RuntimeError("simulated LLM failure")
 
 
-async def _fake_failing_build_agent(run_id: str) -> AsyncIterator[_RaisingAgent]:
+async def _fake_failing_build_agent(
+    run_id: str, system_prompt: str
+) -> AsyncIterator[_RaisingAgent]:
     yield _RaisingAgent()
 
 
@@ -214,7 +218,7 @@ async def test_succeeded_run_message_has_succeeded_status(
         async def astream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any]:
             yield (AIMessageChunk(content="ok", id="m1"), {"langgraph_node": "agent"})
 
-    async def _build(run_id: str) -> AsyncIterator[_HiAgent]:
+    async def _build(run_id: str, system_prompt: str) -> AsyncIterator[_HiAgent]:
         yield _HiAgent()
 
     monkeypatch.setattr(run_mod, "build_agent", _build)

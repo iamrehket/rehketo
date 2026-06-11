@@ -123,6 +123,65 @@ async def test_failure_path_ends_with_run_ended(
 
 
 @pytest.mark.asyncio
+async def test_pre_stream_failure_ends_with_run_ended(
+    settings_env: pytest.MonkeyPatch,
+    db_url: str,
+    db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure BEFORE streaming starts (e.g. loading history) must still
+    finalize the run as failed and terminate the SSE stream with run.ended,
+    not strand the run in 'running' with a hanging subscriber."""
+    reset_registry_for_tests()
+    import rehketo.agent.run as run_mod
+
+    async def _boom(_db: object, _conversation_id: object) -> list[object]:
+        raise RuntimeError("history boom")
+
+    monkeypatch.setattr(run_mod, "_load_history", _boom)
+    monkeypatch.setattr(
+        run_mod,
+        "build_agent",
+        make_fake_build_agent(FakeStreamingAgent(("never",))),
+    )
+    monkeypatch.setattr(run_mod, "generate_title_if_needed", _no_title)
+
+    _user, conv, sid, csrf = await seed_user_and_conv(db)
+    cookies = {SESSION_COOKIE: str(sid), CSRF_COOKIE: csrf}
+    headers = {CSRF_HEADER: csrf}
+
+    async with (
+        live_app() as app,
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c,
+    ):
+        r = await c.post(
+            f"/conversations/{conv.id}/messages",
+            cookies=cookies,
+            headers=headers,
+            json={"content": "go"},
+        )
+        assert r.status_code == 202
+        run_id = r.json()["run_id"]
+        events = await drain_sse(c, run_id, cookies)
+        status_resp = await c.get(f"/runs/{run_id}", cookies=cookies)
+
+    types = [e["type"] for e in events]
+    assert types, "SSE stream produced no events"
+    statuses = [e for e in events if e["type"] == "run.status"]
+    assert any(e.get("status") == "failed" for e in statuses), (
+        f"expected a run.status=failed event; got {statuses}"
+    )
+    assert types[-1] == "run.ended", (
+        f"pre-stream failure did not terminate with run.ended; types={types}"
+    )
+    assert types.count("run.ended") == 1
+    assert status_resp.status_code == 200
+    assert status_resp.json()["status"] == "failed", (
+        f"run row not finalized as failed; got {status_resp.json()}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_cancel_path_ends_with_run_ended(
     settings_env: pytest.MonkeyPatch,
     db_url: str,

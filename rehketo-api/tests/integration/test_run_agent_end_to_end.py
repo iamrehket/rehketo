@@ -57,7 +57,9 @@ class _HelloAgent:
             yield (chunk, {"langgraph_node": "agent"})
 
 
-async def _fake_build_agent(run_id: str) -> AsyncIterator[_HelloAgent]:
+async def _fake_build_agent(
+    run_id: str, system_prompt: str
+) -> AsyncIterator[_HelloAgent]:
     yield _HelloAgent()
 
 
