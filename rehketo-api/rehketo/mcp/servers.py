@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from rehketo.db.models import McpServer
-from rehketo.permissions.dependencies import ResolvedPermissions
+from rehketo.permissions.resolved import ResolvedPermissions
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -20,7 +20,9 @@ if TYPE_CHECKING:
 async def allowed_servers(
     db: AsyncSession, *, user_id: UUID, roles: Iterable[str]
 ) -> list[McpServer]:
-    # Build a ResolvedPermissions so the single permission gate is respected.
+    # The run task sits outside FastAPI DI, so it constructs the same value object
+    # the HTTP layer gets from resolve_permissions — keeping user identity attached
+    # for the OpenFGA cutover.
     perms = ResolvedPermissions(user_id=user_id, roles=frozenset(roles))
     rows = (
         (

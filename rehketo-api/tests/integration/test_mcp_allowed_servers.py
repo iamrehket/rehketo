@@ -27,6 +27,7 @@ async def test_filters_by_role_and_enabled(settings_env, db_url, db) -> None:
     )
     await db.commit()
 
+    # user_id is identity metadata until the OpenFGA cutover; any value works for RBAC.
     user_servers = await allowed_servers(db, user_id=uuid4(), roles=["User"])
     assert [s.name for s in user_servers] == ["everyone"]
 
