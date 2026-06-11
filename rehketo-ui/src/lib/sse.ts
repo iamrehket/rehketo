@@ -1,10 +1,13 @@
 // Run event stream consumer.
 //
-// Protocol (spec §5.4):
-// - success: message.delta*/tool.call/tool.result interleaved → message.complete
-//            → run.status=succeeded → [conversation.updated] → run.ended
+// Protocol:
+// - success: message.delta* → message.complete → run.status=succeeded
+//            → [conversation.updated] → run.ended
 // - failure: message.delta* → run.status=failed → run.ended
 // - cancel:  message.delta* → run.status=cancelled → run.ended
+//
+// tool.call / tool.result interleave with deltas on any flow — they
+// come from the same agent stream loop, not a separate success path.
 //
 // The backend emits SSE frames with an `event:` field set to the event
 // type (e.g. `event: message.delta`). Browsers dispatch those as custom

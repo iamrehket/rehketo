@@ -465,7 +465,7 @@ describe('subscribeRun', () => {
 
 	test('tool flow: tool.call and tool.result reach handlers and track sequence', () => {
 		const c = collectHandlers();
-		subscribeRun('run-1', c.handlers, {
+		const sub = subscribeRun('run-1', c.handlers, {
 			EventSourceImpl: MockEventSource as unknown as typeof EventSource
 		});
 		const src = MockEventSource.instances[0]!;
@@ -478,6 +478,8 @@ describe('subscribeRun', () => {
 			sequence: 1,
 			run_id: 'run-1'
 		});
+		expect(sub.state).toBe('running');
+
 		src.emitEvent({
 			type: 'tool.result',
 			call_id: 'c1',
@@ -489,5 +491,51 @@ describe('subscribeRun', () => {
 
 		expect(c.toolCalls).toEqual([{ tool: 'testsrv__echo', call_id: 'c1' }]);
 		expect(c.toolResults).toEqual([{ call_id: 'c1', is_error: false }]);
+	});
+
+	describe('tool event sequence resume', () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		test('reconnects after tool events with from_sequence = last tool sequence + 1', () => {
+			const onError = vi.fn();
+			subscribeRun(
+				'run-tool-seq',
+				{ onError },
+				{
+					EventSourceImpl: MockEventSource as unknown as typeof EventSource
+				}
+			);
+			const src = MockEventSource.instances[0]!;
+
+			src.emitEvent({
+				type: 'tool.call',
+				call_id: 'c1',
+				tool: 'testsrv__echo',
+				arguments: { text: 'hi' },
+				sequence: 1,
+				run_id: 'run-tool-seq'
+			});
+			src.emitEvent({
+				type: 'tool.result',
+				call_id: 'c1',
+				result: 'echo: hi',
+				is_error: false,
+				sequence: 2,
+				run_id: 'run-tool-seq'
+			});
+			src.emitError();
+
+			expect(MockEventSource.instances).toHaveLength(1);
+			vi.advanceTimersByTime(500);
+			expect(MockEventSource.instances).toHaveLength(2);
+			expect(MockEventSource.instances[1]!.url).toContain('from_sequence=3');
+			expect(onError).not.toHaveBeenCalled();
+		});
 	});
 });
