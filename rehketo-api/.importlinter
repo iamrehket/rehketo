@@ -31,3 +31,21 @@ forbidden_modules =
     rehketo.permissions
     rehketo.db
     rehketo.config
+
+[importlinter:contract:mcp-layering]
+name = mcp depends only on db, permissions, runs, auth crypto, core, config
+type = forbidden
+source_modules =
+    rehketo.mcp
+forbidden_modules =
+    rehketo.api
+    rehketo.agent
+
+[importlinter:contract:api-never-imports-mcp]
+name = api does not import mcp directly (goes through agent.run)
+type = forbidden
+source_modules =
+    rehketo.api
+forbidden_modules =
+    rehketo.mcp
+allow_indirect_imports = True
