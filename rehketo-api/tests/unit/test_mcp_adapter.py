@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastmcp.client.client import CallToolResult
+from fastmcp.exceptions import ToolError
 from mcp.types import TextContent, Tool
 
 from rehketo.mcp.adapter import (
@@ -23,14 +24,16 @@ class FakeClient:
     def __init__(
         self,
         *,
-        text: str = "ok",
+        text: str | None = "ok",
         is_error: bool = False,
         raise_exc: Exception | None = None,
+        structured: dict[str, Any] | None = None,
     ) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self._text = text
         self._is_error = is_error
         self._raise = raise_exc
+        self._structured = structured
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any], *, raise_on_error: bool = True
@@ -38,9 +41,16 @@ class FakeClient:
         self.calls.append((name, arguments))
         if self._raise is not None:
             raise self._raise
+        if self._is_error and raise_on_error:
+            raise ToolError(self._text or "error")
+        content = (
+            [TextContent(type="text", text=self._text)]
+            if self._text is not None
+            else []
+        )
         return CallToolResult(
-            content=[TextContent(type="text", text=self._text)],
-            structured_content=None,
+            content=content,
+            structured_content=self._structured,
             meta=None,
             is_error=self._is_error,
         )
@@ -64,6 +74,8 @@ async def test_success_publishes_call_then_result() -> None:
         server_name="testsrv", tool=_tool(), client=client, run_id="r1", bus=bus
     )
     assert tool.name == "testsrv__echo"
+    assert tool.description == "Echo text back."
+    assert tool.args_schema == _tool().inputSchema
 
     result = await tool.ainvoke({"text": "hi"})
 
@@ -112,3 +124,15 @@ async def test_result_event_is_truncated_but_return_is_not() -> None:
     event_result = bus.events[1][1]["result"]
     assert len(event_result) < len(big)
     assert "truncated" in event_result
+
+
+async def test_structured_content_fallback_when_no_text_parts() -> None:
+    # Non-conforming servers may omit the text mirror of structured output;
+    # the adapter must still return the JSON payload to the model.
+    bus = FakeBus()
+    client = FakeClient(text=None, structured={"answer": 42})
+    tool = build_structured_tool(
+        server_name="testsrv", tool=_tool(), client=client, run_id="r1", bus=bus
+    )
+    result = await tool.ainvoke({"text": "hi"})
+    assert result == '{"answer": 42}'

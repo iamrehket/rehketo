@@ -7,6 +7,7 @@ message stream, so the SSE schema stays decoupled from LangGraph internals.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -32,7 +33,13 @@ _TRUNCATION_MARKER = "\n…[truncated for event stream]"
 
 def _result_text(result: CallToolResult) -> str:
     parts = [block.text for block in result.content if isinstance(block, TextContent)]
-    return "\n".join(parts)
+    if parts:
+        return "\n".join(parts)
+    # Non-conforming servers may omit the text mirror of structured output;
+    # fall back to a JSON dump so the model still sees the payload.
+    if result.structured_content is not None:
+        return json.dumps(result.structured_content)
+    return ""
 
 
 def _truncate_for_event(text: str) -> str:
