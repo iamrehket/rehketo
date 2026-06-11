@@ -45,9 +45,9 @@ New table `mcp_servers`:
 | column          | type        | notes                                              |
 | --------------- | ----------- | -------------------------------------------------- |
 | `id`            | UUID        | PK                                                  |
-| `name`          | TEXT        | NOT NULL UNIQUE; slug-like, used as tool prefix     |
+| `name`          | TEXT        | NOT NULL UNIQUE; slug of alnum segments joined by single `_`/`-` (no `__`, which is the tool-prefix separator), max 64; used as tool prefix |
 | `url`           | TEXT        | NOT NULL; streamable-HTTP endpoint                  |
-| `auth_token`    | TEXT        | nullable; Fernet-encrypted at rest                  |
+| `auth_token_ct` | BYTEA       | nullable; Fernet ciphertext (follows `sessions.refresh_token_ct`) |
 | `allowed_roles` | JSONB       | NOT NULL; list of role-name strings                 |
 | `enabled`       | BOOLEAN     | NOT NULL; soft kill-switch                          |
 | `created_at`    | timestamptz | NOT NULL DEFAULT now()                              |
@@ -133,6 +133,17 @@ Import-linter contracts: `rehketo.mcp` may depend on `rehketo.db`,
 does not import `rehketo.mcp` (the admin routes touch only `db` +
 `permissions`).
 
+Implementation notes: `rehketo.mcp` also depends on `rehketo.auth` (the
+Fernet helpers decrypt `auth_token_ct`) and invokes the gate through
+`ResolvedPermissions` — constructed directly with the run user's id, since
+the run task sits outside FastAPI DI. The api→mcp import contract is
+direct-only (`allow_indirect_imports`): the chain api → agent.run → mcp is
+legitimate. The registry also validates each combined `{server}__{tool}`
+name against the provider tool-name contract (`^[a-zA-Z0-9_-]{1,64}$`,
+fullmatch), skipping offenders, bounds each server's connect+list_tools at
+10s, and treats client-close failures like connect failures — a tool server
+dying mid-run must not change the run's outcome.
+
 ## SSE events
 
 Two new types in the stable event schema — the shapes the v1 spec sketched:
@@ -152,6 +163,12 @@ They flow through the durable bus like every other event: persisted to
 The `result` string in the **event** is truncated at 16 KB (with a marker);
 the full result still goes back to the model. The cap protects the bus and
 the UI from a tool that returns megabytes.
+
+Implementation note (discovered in planning): LangGraph executes parallel
+tool calls concurrently, so a run can have several publishers racing the
+bus's `MAX(sequence)+1` insert. `PostgresEventBus.publish` serializes
+publishes with a process-local per-run `asyncio.Lock` (all of a run's
+publishers share one process, today and after the M4 worker split).
 
 ## Transcript reload
 

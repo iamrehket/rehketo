@@ -59,7 +59,18 @@ for OpenFGA once tools exist.
 Out of scope: MCP apps (M6), user-authored servers, per-user server configuration.
 fastmcp may serve as the client library and, later, as the framework for any
 built-in tools we author — those would register through the same registry, not a
-parallel path.
+parallel path. Spec: `2026-06-11-mcp-tool-calling-design.md`.
+
+### M3.5 — Per-call tool approval
+
+Run pauses on a tool call pending user approval in the chat UI, with a
+per-server `auto_approve` flag so trusted servers keep M3's auto-execute
+behavior. Pulls in LangGraph interrupt/resume, a pending-approval run state,
+new SSE events, and approval UI — deliberately split out of M3 so plain tool
+calling ships first.
+
+Also queued from M3: per-tool allowlist granularity (M3 gates per server;
+per-tool waits for a real case that demands it).
 
 ### M4 — Agent worker split
 
