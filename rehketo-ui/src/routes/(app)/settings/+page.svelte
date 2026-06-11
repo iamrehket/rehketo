@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { apiFetch } from '$lib/api';
 	import { toasts } from '$lib/stores/toasts.svelte';
-	import type { PreferencesOut } from '$lib/types';
+	import { ApiError, type PreferencesOut } from '$lib/types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -28,8 +28,13 @@
 			});
 			saved = res.custom_instructions;
 			toasts.push({ variant: 'info', message: 'Preferences saved.' });
-		} catch {
-			toasts.push({ variant: 'error', message: 'Could not save preferences.' });
+		} catch (err) {
+			if (err instanceof ApiError) console.warn('save preferences failed:', err.code, err.message);
+			// 403: apiFetch already fired the global forbidden hook (root layout
+			// pushes an error toast), so skip the second toast to avoid duplicates.
+			if (!(err instanceof ApiError && err.status === 403)) {
+				toasts.push({ variant: 'error', message: 'Could not save preferences.' });
+			}
 		} finally {
 			saving = false;
 		}
@@ -40,16 +45,22 @@
 	<h1 class="text-lg font-semibold">Settings</h1>
 
 	<section class="mt-6">
-		<h2 class="text-sm font-semibold">Custom instructions</h2>
+		<label for="custom-instructions" class="text-sm font-semibold">Custom instructions</label>
 		<p class="mt-1 text-sm text-muted">Included in every new chat.</p>
 		<textarea
+			id="custom-instructions"
 			bind:value
 			rows="8"
 			placeholder="How should the assistant behave?"
+			aria-describedby="custom-instructions-counter"
+			aria-invalid={overLimit}
 			class="mt-3 w-full resize-y rounded-md border border-border bg-surface p-3 text-sm"
 		></textarea>
 		<div class="mt-2 flex items-center justify-between">
-			<span class="text-xs {overLimit ? 'text-danger' : 'text-muted'}">
+			<span
+				id="custom-instructions-counter"
+				class="text-xs {overLimit ? 'text-danger' : 'text-muted'}"
+			>
 				{value.length} / {MAX_LENGTH}
 			</span>
 			<button

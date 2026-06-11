@@ -1,4 +1,4 @@
-import { redirect } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 
 import { apiFetch } from '$lib/api';
 import { ApiError, type PreferencesOut } from '$lib/types';
@@ -14,9 +14,12 @@ export const load: PageLoad = async ({ url }) => {
 		});
 		return { preferences };
 	} catch (err) {
-		if (err instanceof ApiError && err.status === 401) {
-			const next = encodeURIComponent(url.pathname + url.search);
-			throw redirect(302, `/login?next=${next}`);
+		if (err instanceof ApiError) {
+			if (err.status === 401) {
+				const next = encodeURIComponent(url.pathname + url.search);
+				throw redirect(302, `/login?next=${next}`);
+			}
+			throw error(err.status || 500, err.message);
 		}
 		throw err;
 	}

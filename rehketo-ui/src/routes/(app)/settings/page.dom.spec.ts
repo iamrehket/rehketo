@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import SettingsPage from './+page.svelte';
 import { apiFetch } from '$lib/api';
+import { toasts } from '$lib/stores/toasts.svelte';
+import { ApiError } from '$lib/types';
 
 vi.mock('$lib/api', () => ({
 	apiFetch: vi.fn(async () => ({ custom_instructions: 'updated' }))
@@ -66,6 +68,30 @@ describe('settings page', () => {
 		expect(apiFetch).toHaveBeenCalledWith('/me/preferences', {
 			method: 'PUT',
 			body: JSON.stringify({ custom_instructions: 'be verbose' })
+		});
+		unmount(app);
+	});
+
+	it('pushes an error toast and retains the edited value when save fails', async () => {
+		vi.mocked(apiFetch).mockRejectedValueOnce(new ApiError({ code: 'network', message: 'boom' }));
+		const app = mountPage('be terse');
+		setTextarea('be verbose');
+		document.querySelector('button')?.click();
+		flushSync();
+		await vi.waitFor(() => {
+			expect(toasts.items.some((t) => t.variant === 'error')).toBe(true);
+		});
+		expect(document.querySelector('textarea')?.value).toBe('be verbose');
+		unmount(app);
+	});
+
+	it('disables Save again after a successful save', async () => {
+		const app = mountPage('be terse');
+		setTextarea('be verbose');
+		document.querySelector('button')?.click();
+		flushSync();
+		await vi.waitFor(() => {
+			expect(document.querySelector('button')?.disabled).toBe(true);
 		});
 		unmount(app);
 	});
