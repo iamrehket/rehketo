@@ -1,8 +1,8 @@
 // Run event stream consumer.
 //
 // Protocol (spec §5.4):
-// - success: message.delta* → message.complete → run.status=succeeded
-//            → [conversation.updated] → run.ended
+// - success: message.delta*/tool.call/tool.result interleaved → message.complete
+//            → run.status=succeeded → [conversation.updated] → run.ended
 // - failure: message.delta* → run.status=failed → run.ended
 // - cancel:  message.delta* → run.status=cancelled → run.ended
 //
@@ -43,6 +43,8 @@ export type RunStreamHandlers = {
 	onMessageComplete?: (message: MessageOut) => void;
 	onStatus?: (status: RunStatus, error: { code: string; message: string } | undefined) => void;
 	onConversationUpdated?: (conversationId: string, title: string) => void;
+	onToolCall?: (event: Extract<RunEvent, { type: 'tool.call' }>) => void;
+	onToolResult?: (event: Extract<RunEvent, { type: 'tool.result' }>) => void;
 	onEnded?: () => void;
 	onError?: (err: unknown) => void;
 };
@@ -170,6 +172,21 @@ export function subscribeRun(
 			if (!event) return;
 			track(event);
 			handlers.onConversationUpdated?.(event.conversation_id, event.title);
+		});
+
+		self.addEventListener('tool.call', (evt) => {
+			const event = parseOrError<Extract<RunEvent, { type: 'tool.call' }>>(evt);
+			if (!event) return;
+			track(event);
+			if (sub.state === 'idle' || sub.state === 'queued') sub.state = 'running';
+			handlers.onToolCall?.(event);
+		});
+
+		self.addEventListener('tool.result', (evt) => {
+			const event = parseOrError<Extract<RunEvent, { type: 'tool.result' }>>(evt);
+			if (!event) return;
+			track(event);
+			handlers.onToolResult?.(event);
 		});
 
 		self.addEventListener('run.status', (evt) => {

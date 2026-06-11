@@ -61,6 +61,8 @@ function collectHandlers(): {
 	completes: MessageOut[];
 	statuses: string[];
 	updates: { id: string; title: string }[];
+	toolCalls: { tool: string; call_id: string }[];
+	toolResults: { call_id: string; is_error: boolean }[];
 	ended: number;
 	errors: number;
 	handlers: RunStreamHandlers;
@@ -69,6 +71,8 @@ function collectHandlers(): {
 	const completes: MessageOut[] = [];
 	const statuses: string[] = [];
 	const updates: { id: string; title: string }[] = [];
+	const toolCalls: { tool: string; call_id: string }[] = [];
+	const toolResults: { call_id: string; is_error: boolean }[] = [];
 	let ended = 0;
 	let errors = 0;
 	return {
@@ -76,6 +80,8 @@ function collectHandlers(): {
 		completes,
 		statuses,
 		updates,
+		toolCalls,
+		toolResults,
 		ended,
 		errors,
 		get handlers(): RunStreamHandlers {
@@ -84,6 +90,8 @@ function collectHandlers(): {
 				onMessageComplete: (m) => completes.push(m),
 				onStatus: (s) => statuses.push(s),
 				onConversationUpdated: (id, title) => updates.push({ id, title }),
+				onToolCall: (e) => toolCalls.push({ tool: e.tool, call_id: e.call_id }),
+				onToolResult: (e) => toolResults.push({ call_id: e.call_id, is_error: e.is_error }),
 				onEnded: () => {
 					ended++;
 				},
@@ -453,5 +461,33 @@ describe('subscribeRun', () => {
 			expect(MockEventSource.instances).toHaveLength(1);
 			expect(onError).not.toHaveBeenCalled();
 		});
+	});
+
+	test('tool flow: tool.call and tool.result reach handlers and track sequence', () => {
+		const c = collectHandlers();
+		subscribeRun('run-1', c.handlers, {
+			EventSourceImpl: MockEventSource as unknown as typeof EventSource
+		});
+		const src = MockEventSource.instances[0]!;
+
+		src.emitEvent({
+			type: 'tool.call',
+			call_id: 'c1',
+			tool: 'testsrv__echo',
+			arguments: { text: 'hi' },
+			sequence: 1,
+			run_id: 'run-1'
+		});
+		src.emitEvent({
+			type: 'tool.result',
+			call_id: 'c1',
+			result: 'echo: hi',
+			is_error: false,
+			sequence: 2,
+			run_id: 'run-1'
+		});
+
+		expect(c.toolCalls).toEqual([{ tool: 'testsrv__echo', call_id: 'c1' }]);
+		expect(c.toolResults).toEqual([{ call_id: 'c1', is_error: false }]);
 	});
 });
