@@ -19,6 +19,8 @@ from rehketo.runs.registry import reset_registry_for_tests
 from tests.integration._helpers import live_app
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import pytest
 
 
@@ -28,7 +30,9 @@ class _HiAgent:
         yield (AIMessageChunk(content="hi", id="msg-e2e"), {"langgraph_node": "agent"})
 
 
-async def _fake_build_agent(run_id: str, system_prompt: str) -> Any:
+async def _fake_build_agent(
+    run_id: str, system_prompt: str, tools: Sequence[Any] = ()
+) -> Any:
     yield _HiAgent()
 
 

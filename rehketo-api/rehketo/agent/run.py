@@ -15,7 +15,9 @@ from rehketo.agent.prompt import assemble_system_prompt
 from rehketo.agent.title import generate_title_if_needed
 from rehketo.core.logging import get_logger
 from rehketo.db import sessionmaker
-from rehketo.db.models import Conversation, Message, Run, UserPreferences
+from rehketo.db.models import Conversation, Message, Run, UserPreferences, UserRole
+from rehketo.mcp.registry import build_run_toolset
+from rehketo.mcp.servers import allowed_servers
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -104,18 +106,34 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  #
                     )
                 ).scalar_one_or_none()
                 custom_instructions = prefs.custom_instructions if prefs else None
+                roles = (
+                    (
+                        await db.execute(
+                            select(UserRole.role).where(UserRole.user_id == user_id)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                servers = await allowed_servers(db, user_id=user_id, roles=roles)
             system_prompt = assemble_system_prompt(custom_instructions)
 
-            async for agent in build_agent(str(run_id), system_prompt):
-                async for chunk in agent.astream(
-                    {"messages": history},
-                    config={"configurable": {"thread_id": str(run_id)}},
-                    stream_mode="messages",
-                ):
-                    for event in transform_chunk(chunk):  # type: ignore[arg-type]
-                        await bus.publish(str(run_id), event)
-                        if event["type"] == "message.delta":
-                            assembled_text += str(event["delta"])
+            # MCP clients live exactly as long as the agent run; the exit
+            # stack closes them on every path (success, failure, cancel).
+            async with contextlib.AsyncExitStack() as stack:
+                tools = await build_run_toolset(
+                    stack, servers, run_id=str(run_id), bus=bus
+                )
+                async for agent in build_agent(str(run_id), system_prompt, tools=tools):
+                    async for chunk in agent.astream(
+                        {"messages": history},
+                        config={"configurable": {"thread_id": str(run_id)}},
+                        stream_mode="messages",
+                    ):
+                        for event in transform_chunk(chunk):  # type: ignore[arg-type]
+                            await bus.publish(str(run_id), event)
+                            if event["type"] == "message.delta":
+                                assembled_text += str(event["delta"])
 
             # Persist the assistant message and finalize the run.
             assistant_id = uuid4()

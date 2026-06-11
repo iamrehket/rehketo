@@ -40,7 +40,7 @@ from rehketo.runs.registry import reset_registry_for_tests
 from tests.integration._helpers import live_app
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator
+    from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 
 
 class _HelloAgent:
@@ -58,7 +58,7 @@ class _HelloAgent:
 
 
 async def _fake_build_agent(
-    run_id: str, system_prompt: str
+    run_id: str, system_prompt: str, tools: Sequence[Any] = ()
 ) -> AsyncIterator[_HelloAgent]:
     yield _HelloAgent()
 
