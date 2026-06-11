@@ -82,7 +82,7 @@ export type MessageOut = {
 };
 
 export type ConversationDetail = ConversationSummary & {
-	messages: MessageOut[];
+	items: TranscriptItem[];
 	active_run_id: string | null;
 };
 

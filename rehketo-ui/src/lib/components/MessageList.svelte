@@ -1,14 +1,17 @@
 <script lang="ts">
 	import AssistantBubble from './AssistantBubble.svelte';
 	import MessageBubble from './MessageBubble.svelte';
-	import type { MessageOut, RunStatus } from '$lib/types';
+	import ToolChip from './ToolChip.svelte';
+	import type { RunStatus, TranscriptItem } from '$lib/types';
 
 	let {
-		messages,
+		items,
+		liveRunId = null,
 		streamingText = null,
 		streamingStatus = null
 	}: {
-		messages: MessageOut[];
+		items: TranscriptItem[];
+		liveRunId?: string | null;
 		streamingText?: string | null;
 		streamingStatus?: RunStatus | null;
 	} = $props();
@@ -17,7 +20,7 @@
 
 	$effect(() => {
 		// Snap to bottom whenever the list grows or streaming text updates.
-		void messages.length;
+		void items.length;
 		void streamingText;
 		void streamingStatus;
 		if (container) container.scrollTop = container.scrollHeight;
@@ -34,9 +37,13 @@
 
 <div bind:this={container} class="flex-1 overflow-y-auto px-6 py-4">
 	<ul class="mx-auto flex max-w-3xl flex-col gap-4">
-		{#each messages as message (message.id)}
+		{#each items as item (item.kind === 'message' ? item.id : item.call_id)}
 			<li>
-				<MessageBubble {message} />
+				{#if item.kind === 'message'}
+					<MessageBubble message={item} />
+				{:else}
+					<ToolChip {item} live={item.run_id === liveRunId} />
+				{/if}
 			</li>
 		{/each}
 		{#if showStreamingBubble}

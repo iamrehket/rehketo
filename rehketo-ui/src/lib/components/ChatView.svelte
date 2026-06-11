@@ -14,13 +14,14 @@
 		type ErrorEnvelope,
 		type MessageKickoffOut,
 		type MessageOut,
-		type RunStatus
+		type RunStatus,
+		type TranscriptItem
 	} from '$lib/types';
 
 	let { conversation }: { conversation: ConversationDetail } = $props();
 
 	// svelte-ignore state_referenced_locally
-	let messages = $state<MessageOut[]>(conversation.messages);
+	let items = $state<TranscriptItem[]>(conversation.items);
 	// svelte-ignore state_referenced_locally
 	let title = $state(conversation.title);
 
@@ -54,8 +55,8 @@
 			onMessageComplete: (message) => {
 				// Replay can deliver a message.complete the conversation GET
 				// already included — dedupe by id rather than trust ordering.
-				if (!messages.some((m) => m.id === message.id)) {
-					messages = [...messages, message];
+				if (!items.some((i) => i.kind === 'message' && i.id === message.id)) {
+					items = [...items, { ...message, kind: 'message' as const }];
 				}
 				streamingText = null;
 			},
@@ -69,25 +70,48 @@
 					conversations.patchTitle(conversationId, newTitle);
 				}
 			},
+			onToolCall: (event) => {
+				// Replay can re-deliver a call already present from the GET.
+				if (!items.some((i) => i.kind === 'tool' && i.call_id === event.call_id)) {
+					items = [
+						...items,
+						{
+							kind: 'tool',
+							run_id: event.run_id,
+							call_id: event.call_id,
+							tool: event.tool,
+							arguments: event.arguments,
+							result: null,
+							is_error: null,
+							created_at: new Date(Date.now()).toISOString()
+						}
+					];
+				}
+			},
+			onToolResult: (event) => {
+				items = items.map((i) =>
+					i.kind === 'tool' && i.call_id === event.call_id
+						? { ...i, result: event.result, is_error: event.is_error }
+						: i
+				);
+			},
 			onEnded: () => {
 				if (streamingStatus === 'failed' || streamingStatus === 'cancelled') {
 					// Persist the partial bubble as a "terminal" assistant message
 					// locally so reload semantics match live. The backend has also
 					// persisted it with run_status set.
 					if (streamingText !== null) {
-						messages = [
-							...messages,
-							{
-								id: `local-${activeRunId ?? ''}-terminal`,
-								conversation_id: conversation.id,
-								role: 'assistant',
-								content: { text: streamingText },
-								run_id: activeRunId,
-								created_at: new Date(Date.now()).toISOString(),
-								run_status: streamingStatus,
-								run_error: streamingError
-							}
-						];
+						const terminalMessage: MessageOut = {
+							id: `local-${activeRunId ?? ''}-terminal`,
+							conversation_id: conversation.id,
+							role: 'assistant',
+							content: { text: streamingText },
+							run_id: activeRunId,
+							created_at: new Date(Date.now()).toISOString(),
+							run_status: streamingStatus,
+							run_error: streamingError
+						};
+						items = [...items, { ...terminalMessage, kind: 'message' as const }];
 					}
 				}
 				resetStreaming();
@@ -112,19 +136,17 @@
 		// POST resolves — matching ids keep reload semantics correct).
 		const tempId = `local-${Date.now()}`;
 		const now = new Date(Date.now()).toISOString();
-		messages = [
-			...messages,
-			{
-				id: tempId,
-				conversation_id: conversation.id,
-				role: 'user',
-				content: { text },
-				run_id: null,
-				created_at: now,
-				run_status: null,
-				run_error: null
-			}
-		];
+		const optimisticMessage: MessageOut = {
+			id: tempId,
+			conversation_id: conversation.id,
+			role: 'user',
+			content: { text },
+			run_id: null,
+			created_at: now,
+			run_status: null,
+			run_error: null
+		};
+		items = [...items, { ...optimisticMessage, kind: 'message' as const }];
 
 		try {
 			const kickoff = await apiFetch<MessageKickoffOut>(
@@ -135,14 +157,16 @@
 				}
 			);
 			// Reconcile the optimistic bubble with the server-assigned id.
-			messages = messages.map((m) =>
-				m.id === tempId ? { ...m, id: kickoff.message_id, run_id: kickoff.run_id } : m
+			items = items.map((i) =>
+				i.kind === 'message' && i.id === tempId
+					? { ...i, id: kickoff.message_id, run_id: kickoff.run_id }
+					: i
 			);
 			conversations.bumpUpdatedAt(conversation.id);
 			attachRun(kickoff.run_id);
 		} catch (err) {
 			// Roll back the optimistic bubble on failure.
-			messages = messages.filter((m) => m.id !== tempId);
+			items = items.filter((i) => !(i.kind === 'message' && i.id === tempId));
 			if (err instanceof ApiError) console.warn('send failed:', err.code, err.message);
 		}
 	}
@@ -178,7 +202,7 @@
 		</div>
 	{/if}
 
-	<MessageList {messages} {streamingText} {streamingStatus} />
+	<MessageList {items} liveRunId={activeRunId} {streamingText} {streamingStatus} />
 
 	{#if isStreaming && auth.can('chat.cancel_run')}
 		<div class="flex justify-center border-t border-border bg-bg/80 px-6 py-2">

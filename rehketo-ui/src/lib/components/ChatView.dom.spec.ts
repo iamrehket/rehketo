@@ -8,20 +8,36 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ChatView from './ChatView.svelte';
 import { subscribeRun } from '$lib/sse';
-import type { ConversationDetail } from '$lib/types';
+import type { ConversationDetail, ToolCallItem } from '$lib/types';
 
 vi.mock('$lib/sse', () => ({
 	subscribeRun: vi.fn(() => ({ state: 'idle', unsubscribe: vi.fn() }))
 }));
 
-function conversation(activeRunId: string | null): ConversationDetail {
+function conversation(
+	activeRunId: string | null,
+	extraItems: ConversationDetail['items'] = []
+): ConversationDetail {
 	return {
 		id: 'c0000000-0000-0000-0000-000000000001',
 		title: null,
 		created_at: '2026-06-10T00:00:00Z',
 		updated_at: '2026-06-10T00:00:00Z',
-		messages: [],
+		items: extraItems,
 		active_run_id: activeRunId
+	};
+}
+
+function pendingToolItem(runId: string): ToolCallItem {
+	return {
+		kind: 'tool',
+		run_id: runId,
+		call_id: 'call-1',
+		tool: 'testsrv__echo',
+		arguments: { text: 'hi' },
+		result: null,
+		is_error: null,
+		created_at: '2026-06-10T00:00:00Z'
 	};
 }
 
@@ -48,5 +64,16 @@ describe('ChatView resume-on-open', () => {
 		});
 		expect(subscribeRun).not.toHaveBeenCalled();
 		unmount(app);
+	});
+
+	it('renders a running tool chip for a pending item from the active run', () => {
+		const runId = 'a0000000-0000-0000-0000-00000000000a';
+		const app = mount(ChatView, {
+			target: document.body,
+			props: { conversation: conversation(runId, [pendingToolItem(runId)]) }
+		});
+		expect(document.querySelector('[data-status="running"]')).not.toBeNull();
+		unmount(app);
+		document.body.innerHTML = '';
 	});
 });
