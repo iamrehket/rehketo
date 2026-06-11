@@ -385,6 +385,33 @@
         "title": "MessageOut",
         "type": "object"
       },
+      "PreferencesIn": {
+        "properties": {
+          "custom_instructions": {
+            "maxLength": 4000,
+            "title": "Custom Instructions",
+            "type": "string"
+          }
+        },
+        "required": [
+          "custom_instructions"
+        ],
+        "title": "PreferencesIn",
+        "type": "object"
+      },
+      "PreferencesOut": {
+        "properties": {
+          "custom_instructions": {
+            "title": "Custom Instructions",
+            "type": "string"
+          }
+        },
+        "required": [
+          "custom_instructions"
+        ],
+        "title": "PreferencesOut",
+        "type": "object"
+      },
       "RunOut": {
         "properties": {
           "conversation_id": {
@@ -1116,6 +1143,79 @@
           }
         ],
         "summary": "Capabilities",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/me/preferences": {
+      "get": {
+        "operationId": "get_preferences_me_preferences_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreferencesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "Get Preferences",
+        "tags": [
+          "me"
+        ]
+      },
+      "put": {
+        "operationId": "put_preferences_me_preferences_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferencesIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreferencesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          },
+          {
+            "CSRFToken": []
+          }
+        ],
+        "summary": "Put Preferences",
         "tags": [
           "me"
         ]

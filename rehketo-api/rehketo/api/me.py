@@ -6,14 +6,15 @@ from uuid import (
 )
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from sqlalchemy import select
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002  # FastAPI needs runtime type for Depends()
 )
 
 from rehketo.db import get_session
-from rehketo.db.models import User
+from rehketo.db.models import User, UserPreferences
 from rehketo.permissions.actions import ACTIONS
 from rehketo.permissions.dependencies import ResolvedPermissions, resolve_permissions
 
@@ -57,3 +58,48 @@ async def capabilities(
         if perms.can(a, resource_type=resource_type, resource_id=resource_id)
     ]
     return CapabilitiesOut(actions=allowed)
+
+
+class PreferencesOut(BaseModel):
+    custom_instructions: str
+
+
+class PreferencesIn(BaseModel):
+    custom_instructions: str = Field(max_length=4000)
+
+
+@router.get("/me/preferences", response_model=PreferencesOut)
+async def get_preferences(
+    db: Annotated[AsyncSession, Depends(get_session)],
+    perms: Annotated[ResolvedPermissions, Depends(resolve_permissions)],
+) -> PreferencesOut:
+    prefs = (
+        await db.execute(
+            select(UserPreferences).where(UserPreferences.user_id == perms.user_id)
+        )
+    ).scalar_one_or_none()
+    return PreferencesOut(
+        custom_instructions=prefs.custom_instructions if prefs else ""
+    )
+
+
+@router.put("/me/preferences", response_model=PreferencesOut)
+async def put_preferences(
+    body: PreferencesIn,
+    db: Annotated[AsyncSession, Depends(get_session)],
+    perms: Annotated[ResolvedPermissions, Depends(resolve_permissions)],
+) -> PreferencesOut:
+    stmt = (
+        pg_insert(UserPreferences)
+        .values(user_id=perms.user_id, custom_instructions=body.custom_instructions)
+        .on_conflict_do_update(
+            index_elements=[UserPreferences.user_id],
+            set_={
+                "custom_instructions": body.custom_instructions,
+                "updated_at": func.now(),
+            },
+        )
+    )
+    await db.execute(stmt)
+    await db.commit()
+    return PreferencesOut(custom_instructions=body.custom_instructions)
