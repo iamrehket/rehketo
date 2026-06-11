@@ -34,6 +34,7 @@ describe('settings page', () => {
 	beforeEach(() => {
 		document.body.innerHTML = '';
 		vi.clearAllMocks();
+		for (const t of [...toasts.items]) toasts.dismiss(t.id);
 	});
 
 	it('renders the loaded instructions in the textarea', () => {
@@ -86,13 +87,15 @@ describe('settings page', () => {
 	});
 
 	it('disables Save again after a successful save', async () => {
+		vi.mocked(apiFetch).mockResolvedValueOnce({ custom_instructions: 'be verbose' });
 		const app = mountPage('be terse');
 		setTextarea('be verbose');
 		document.querySelector('button')?.click();
 		flushSync();
-		await vi.waitFor(() => {
-			expect(document.querySelector('button')?.disabled).toBe(true);
-		});
+		// Wait for save completion: the info toast is pushed only after the API
+		// round-trip resolves and saved is updated, so dirty becomes false.
+		await vi.waitFor(() => expect(toasts.items.some((t) => t.variant === 'info')).toBe(true));
+		expect(document.querySelector('button')?.disabled).toBe(true);
 		unmount(app);
 	});
 });
