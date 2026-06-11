@@ -124,7 +124,7 @@ async def test_cancel_persists_partial_assistant_text(
             f"/conversations/{conv.id}", cookies={SESSION_COOKIE: str(sid)}
         )
         assert detail.status_code == 200
-        msgs = detail.json()["messages"]
+        msgs = [i for i in detail.json()["items"] if i["kind"] == "message"]
 
     assistant_msgs = [m for m in msgs if m["role"] == "assistant"]
     assert len(assistant_msgs) == 1
@@ -188,7 +188,7 @@ async def test_fail_persists_partial_with_error(
         detail = await c.get(
             f"/conversations/{conv.id}", cookies={SESSION_COOKIE: str(sid)}
         )
-        msgs = detail.json()["messages"]
+        msgs = [i for i in detail.json()["items"] if i["kind"] == "message"]
 
     assistant_msgs = [m for m in msgs if m["role"] == "assistant"]
     assert len(assistant_msgs) == 1
@@ -264,7 +264,7 @@ async def test_succeeded_run_message_has_succeeded_status(
         detail = await c.get(
             f"/conversations/{conv.id}", cookies={SESSION_COOKIE: str(sid)}
         )
-        msgs = detail.json()["messages"]
+        msgs = [i for i in detail.json()["items"] if i["kind"] == "message"]
 
     assistant = next(m for m in msgs if m["role"] == "assistant")
     assert assistant["run_status"] == "succeeded"
@@ -300,7 +300,7 @@ async def test_user_message_has_no_run_status(
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get(f"/conversations/{conv.id}", cookies={SESSION_COOKIE: str(sid)})
-    user_msg = r.json()["messages"][0]
+    user_msg = next(i for i in r.json()["items"] if i["kind"] == "message")
     assert user_msg["role"] == "user"
     assert user_msg["run_status"] is None
     assert user_msg["run_error"] is None

@@ -63,7 +63,7 @@ async def test_full_lifecycle(settings_env, db_url) -> None:
         assert r.status_code == 200
         body = r.json()
         assert body["id"] == conv_id
-        assert body["messages"] == []
+        assert body["items"] == []
 
         # Rename via PATCH
         r = await c.patch(

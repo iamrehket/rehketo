@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002  # FastAPI needs runtime type for Depends()
 )
 
 from rehketo.db import get_session
-from rehketo.db.models import Conversation, Message, Run
+from rehketo.db.models import Conversation, Message, Run, RunEvent
 from rehketo.permissions.dependencies import ResolvedPermissions, resolve_permissions
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -57,8 +57,33 @@ class MessageOut(BaseModel):
     run_error: dict[str, object] | None = None
 
 
+class MessageItem(MessageOut):
+    kind: Literal["message"] = "message"
+
+
+class ToolCallItem(BaseModel):
+    """A tool invocation reconstructed from run_events on reload — the event
+    log is the single source of truth for live streaming, resume, and
+    transcript history. result is None while no tool.result event exists
+    (in-flight, or the run died mid-call)."""
+
+    kind: Literal["tool"] = "tool"
+    run_id: UUID
+    call_id: str
+    tool: str
+    arguments: dict[str, object]
+    result: str | None = None
+    is_error: bool | None = None
+    created_at: datetime
+
+
+TranscriptItem = Annotated[MessageItem | ToolCallItem, Field(discriminator="kind")]
+
+
 class ConversationDetail(ConversationSummary):
-    messages: list[MessageOut]
+    # Chronologically interleaved transcript — messages + tool activity
+    # reconstructed from run_events. Replaces the old `messages` field.
+    items: list[TranscriptItem]
     # In-flight run for this conversation (queued/running), newest first.
     # The UI uses this to reattach to the live SSE stream on open.
     # Best-effort: a run abandoned by a process crash stays queued/running
@@ -75,6 +100,46 @@ class ConversationPatch(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+async def _tool_items(db: AsyncSession, conversation_id: UUID) -> list[ToolCallItem]:
+    """Reconstruct ToolCallItem pairs from run_events for a conversation.
+
+    tool.call events seed an entry; the matching tool.result (same call_id)
+    fills in result/is_error. Unmatched calls are left pending (result=None).
+    Query is extracted here to keep get_conversation under the branch/statement caps.
+    """
+    rows = (
+        await db.execute(
+            select(RunEvent.run_id, RunEvent.payload, RunEvent.created_at)
+            .join(Run, Run.id == RunEvent.run_id)
+            .where(
+                Run.conversation_id == conversation_id,
+                RunEvent.payload["type"].astext.in_(["tool.call", "tool.result"]),
+            )
+            .order_by(RunEvent.run_id, RunEvent.sequence)
+        )
+    ).all()
+    by_call_id: dict[str, ToolCallItem] = {}
+    for run_id, payload, created_at in rows:
+        call_id = str(payload.get("call_id", ""))
+        if payload["type"] == "tool.call":
+            by_call_id[call_id] = ToolCallItem(
+                run_id=run_id,
+                call_id=call_id,
+                tool=str(payload.get("tool", "")),
+                arguments=payload.get("arguments") or {},
+                created_at=created_at,
+            )
+        elif call_id in by_call_id:
+            item = by_call_id[call_id]
+            by_call_id[call_id] = item.model_copy(
+                update={
+                    "result": str(payload.get("result", "")),
+                    "is_error": bool(payload.get("is_error", False)),
+                }
+            )
+    return list(by_call_id.values())
 
 
 @router.post("", status_code=201, response_model=ConversationOut)
@@ -166,25 +231,30 @@ async def get_conversation(
     # Treat in-flight runs (queued/running) as "no terminal status yet" on the
     # wire — the UI only uses run_status to render terminal-state badges.
     terminal = {"succeeded", "failed", "cancelled"}
+    message_items: list[TranscriptItem] = [
+        MessageItem(
+            id=m.id,
+            conversation_id=m.conversation_id,
+            role=m.role,
+            content=m.content,
+            run_id=m.run_id,
+            created_at=m.created_at,
+            run_status=run_status if run_status in terminal else None,
+            run_error=run_error if run_status in terminal else None,
+        )
+        for m, run_status, run_error in rows
+    ]
+    tool_items: list[TranscriptItem] = list(await _tool_items(db, conv.id))
+    # sorted() is stable; tool.call always commits before the run's assistant
+    # message is inserted, so wall-clock timestamps order the transcript correctly.
+    items = sorted(message_items + tool_items, key=lambda i: i.created_at)
     return ConversationDetail(
         id=conv.id,
         title=conv.title,
         created_at=conv.created_at,
         updated_at=conv.updated_at,
         active_run_id=active_run_id,
-        messages=[
-            MessageOut(
-                id=m.id,
-                conversation_id=m.conversation_id,
-                role=m.role,
-                content=m.content,
-                run_id=m.run_id,
-                created_at=m.created_at,
-                run_status=run_status if run_status in terminal else None,
-                run_error=run_error if run_status in terminal else None,
-            )
-            for m, run_status, run_error in rows
-        ],
+        items=items,
     )
 
 

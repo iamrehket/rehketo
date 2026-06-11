@@ -104,6 +104,7 @@ async def test_full_chat_turn(
             cookies={SESSION_COOKIE: sid},
         )
         assert r.status_code == 200
-        roles = [m["role"] for m in r.json()["messages"]]
+        msgs = [i for i in r.json()["items"] if i["kind"] == "message"]
+        roles = [m["role"] for m in msgs]
         assert "user" in roles
         assert "assistant" in roles

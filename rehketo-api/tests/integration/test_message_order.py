@@ -84,7 +84,7 @@ async def test_messages_returned_in_insertion_order(
         r = await c.get(f"/conversations/{conv.id}", cookies=cookies)
         assert r.status_code == 200, r.text
 
-    messages = r.json()["messages"]
+    messages = [i for i in r.json()["items"] if i["kind"] == "message"]
     roles = [m["role"] for m in messages]
     user_texts = [
         (m["content"].get("text") or "") for m in messages if m["role"] == "user"

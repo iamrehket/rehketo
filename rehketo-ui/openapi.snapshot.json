@@ -58,11 +58,25 @@
             "title": "Id",
             "type": "string"
           },
-          "messages": {
+          "items": {
             "items": {
-              "$ref": "#/components/schemas/MessageOut"
+              "discriminator": {
+                "mapping": {
+                  "message": "#/components/schemas/MessageItem",
+                  "tool": "#/components/schemas/ToolCallItem"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/MessageItem"
+                },
+                {
+                  "$ref": "#/components/schemas/ToolCallItem"
+                }
+              ]
             },
-            "title": "Messages",
+            "title": "Items",
             "type": "array"
           },
           "title": {
@@ -87,7 +101,7 @@
           "title",
           "created_at",
           "updated_at",
-          "messages"
+          "items"
         ],
         "title": "ConversationDetail",
         "type": "object"
@@ -467,27 +481,7 @@
         "title": "MessageCreate",
         "type": "object"
       },
-      "MessageKickoffOut": {
-        "properties": {
-          "message_id": {
-            "format": "uuid",
-            "title": "Message Id",
-            "type": "string"
-          },
-          "run_id": {
-            "format": "uuid",
-            "title": "Run Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "message_id",
-          "run_id"
-        ],
-        "title": "MessageKickoffOut",
-        "type": "object"
-      },
-      "MessageOut": {
+      "MessageItem": {
         "properties": {
           "content": {
             "additionalProperties": true,
@@ -507,6 +501,12 @@
           "id": {
             "format": "uuid",
             "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "message",
+            "default": "message",
+            "title": "Kind",
             "type": "string"
           },
           "role": {
@@ -557,7 +557,27 @@
           "run_id",
           "created_at"
         ],
-        "title": "MessageOut",
+        "title": "MessageItem",
+        "type": "object"
+      },
+      "MessageKickoffOut": {
+        "properties": {
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "run_id"
+        ],
+        "title": "MessageKickoffOut",
         "type": "object"
       },
       "PreferencesIn": {
@@ -615,6 +635,71 @@
           "model"
         ],
         "title": "RunOut",
+        "type": "object"
+      },
+      "ToolCallItem": {
+        "description": "A tool invocation reconstructed from run_events on reload \u2014 the event\nlog is the single source of truth for live streaming, resume, and\ntranscript history. result is None while no tool.result event exists\n(in-flight, or the run died mid-call).",
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "is_error": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Error"
+          },
+          "kind": {
+            "const": "tool",
+            "default": "tool",
+            "title": "Kind",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "call_id",
+          "tool",
+          "arguments",
+          "created_at"
+        ],
+        "title": "ToolCallItem",
         "type": "object"
       },
       "ValidationError": {
