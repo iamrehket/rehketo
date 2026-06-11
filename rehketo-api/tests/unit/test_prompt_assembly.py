@@ -20,4 +20,4 @@ def test_instructions_appended_under_delimited_section() -> None:
 
 def test_instructions_are_stripped() -> None:
     result = assemble_system_prompt("  Be terse.  \n")
-    assert result.endswith("Be terse.")
+    assert result == f"{BASE_SYSTEM_PROMPT}\n\n## User instructions\nBe terse."

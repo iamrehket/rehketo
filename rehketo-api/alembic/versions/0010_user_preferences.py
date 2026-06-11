@@ -6,6 +6,9 @@ Create Date: 2026-06-10 00:00:00.000000+00:00
 
 1:1 with users; row created on first save by the API, never by the auth
 flow. No row means "no preferences set".
+
+Unlike the user-FKs 0006 left RESTRICT (user deletion is an audited path),
+preferences are not audited history — CASCADE is safe.
 """
 
 from __future__ import annotations
