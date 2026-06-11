@@ -105,9 +105,16 @@ class ConversationPatch(BaseModel):
 async def _tool_items(db: AsyncSession, conversation_id: UUID) -> list[ToolCallItem]:
     """Reconstruct ToolCallItem pairs from run_events for a conversation.
 
-    tool.call events seed an entry; the matching tool.result (same call_id)
-    fills in result/is_error. Unmatched calls are left pending (result=None).
-    Query is extracted here to keep get_conversation under the branch/statement caps.
+    tool.call events seed an entry; the matching tool.result (same run_id +
+    call_id) fills in result/is_error. Keying by (run_id, call_id) prevents
+    collisions when provider-supplied IDs like "call_0" repeat across runs.
+    Unmatched calls are left pending (result=None). Query is extracted here to
+    keep get_conversation under the branch/statement caps.
+
+    Growth note: the query filters every run_event row of the conversation
+    through an unindexed JSONB type check; fine at present scale — when it
+    bites, a partial index on tool event types or delta pruning in the startup
+    sweep is the remedy.
     """
     rows = (
         await db.execute(
@@ -120,20 +127,21 @@ async def _tool_items(db: AsyncSession, conversation_id: UUID) -> list[ToolCallI
             .order_by(RunEvent.run_id, RunEvent.sequence)
         )
     ).all()
-    by_call_id: dict[str, ToolCallItem] = {}
+    by_call_id: dict[tuple[UUID, str], ToolCallItem] = {}
     for run_id, payload, created_at in rows:
         call_id = str(payload.get("call_id", ""))
+        key = (run_id, call_id)
         if payload["type"] == "tool.call":
-            by_call_id[call_id] = ToolCallItem(
+            by_call_id[key] = ToolCallItem(
                 run_id=run_id,
                 call_id=call_id,
                 tool=str(payload.get("tool", "")),
                 arguments=payload.get("arguments") or {},
                 created_at=created_at,
             )
-        elif call_id in by_call_id:
-            item = by_call_id[call_id]
-            by_call_id[call_id] = item.model_copy(
+        elif key in by_call_id:
+            item = by_call_id[key]
+            by_call_id[key] = item.model_copy(
                 update={
                     "result": str(payload.get("result", "")),
                     "is_error": bool(payload.get("is_error", False)),
