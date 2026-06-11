@@ -11,10 +11,11 @@ from sqlalchemy import select, update
 
 from rehketo.agent.events import transform_chunk
 from rehketo.agent.graph import build_agent
+from rehketo.agent.prompt import assemble_system_prompt
 from rehketo.agent.title import generate_title_if_needed
 from rehketo.core.logging import get_logger
 from rehketo.db import sessionmaker
-from rehketo.db.models import Conversation, Message, Run
+from rehketo.db.models import Conversation, Message, Run, UserPreferences
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,12 +82,20 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  #
         await bus.publish(str(run_id), {"type": "run.status", "status": "running"})
 
         history = await _load_history(db, conversation_id)
+        prefs = (
+            await db.execute(
+                select(UserPreferences).where(UserPreferences.user_id == run.user_id)
+            )
+        ).scalar_one_or_none()
+        system_prompt = assemble_system_prompt(
+            prefs.custom_instructions if prefs else None
+        )
 
     assembled_text = ""
 
     try:
         try:
-            async for agent in build_agent(str(run_id)):
+            async for agent in build_agent(str(run_id), system_prompt):
                 async for chunk in agent.astream(
                     {"messages": history},
                     config={"configurable": {"thread_id": str(run_id)}},

@@ -37,7 +37,9 @@ class _ImmediateAgent:
             yield  # pragma: no cover
 
 
-async def _fake_build_agent(run_id: str) -> AsyncIterator[_ImmediateAgent]:
+async def _fake_build_agent(
+    run_id: str, system_prompt: str
+) -> AsyncIterator[_ImmediateAgent]:
     yield _ImmediateAgent()
 
 

@@ -40,7 +40,7 @@ class _HiAgent:
         yield (AIMessageChunk(content="hi", id="m1"), {"langgraph_node": "agent"})
 
 
-async def _fake_build_agent(run_id: str) -> AsyncIterator[_HiAgent]:
+async def _fake_build_agent(run_id: str, system_prompt: str) -> AsyncIterator[_HiAgent]:
     yield _HiAgent()
 
 

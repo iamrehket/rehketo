@@ -28,7 +28,7 @@ class _HiAgent:
         yield (AIMessageChunk(content="hi", id="msg-e2e"), {"langgraph_node": "agent"})
 
 
-async def _fake_build_agent(run_id: str) -> Any:
+async def _fake_build_agent(run_id: str, system_prompt: str) -> Any:
     yield _HiAgent()
 
 

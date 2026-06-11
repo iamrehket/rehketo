@@ -36,7 +36,9 @@ class _NeverStreamingAgent:
             yield  # pragma: no cover
 
 
-async def _fake_build_agent(run_id: str) -> AsyncIterator[_NeverStreamingAgent]:
+async def _fake_build_agent(
+    run_id: str, system_prompt: str
+) -> AsyncIterator[_NeverStreamingAgent]:
     yield _NeverStreamingAgent()
 
 

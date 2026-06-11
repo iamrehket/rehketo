@@ -27,6 +27,7 @@ from __future__ import annotations
 import pytest
 
 from rehketo.agent.graph import build_agent
+from rehketo.agent.prompt import BASE_SYSTEM_PROMPT
 
 pytestmark = pytest.mark.live_deps
 
@@ -34,7 +35,7 @@ pytestmark = pytest.mark.live_deps
 async def test_build_agent_reaches_checkpointer(
     settings_env: object, db_url: str
 ) -> None:
-    async for graph in build_agent("canary-run"):
+    async for graph in build_agent("canary-run", BASE_SYSTEM_PROMPT):
         # Reading state for a brand-new thread must return a StateSnapshot
         # (possibly empty) without error. If the checkpointer tables are
         # missing or drifted, psycopg raises UndefinedTable here.

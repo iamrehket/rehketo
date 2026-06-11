@@ -152,7 +152,9 @@ def make_fake_build_agent(agent: FakeStreamingAgent) -> Any:
     generator. So our replacement must also be an async generator.
     """
 
-    async def _build(_run_id: str) -> AsyncIterator[FakeStreamingAgent]:
+    async def _build(
+        _run_id: str, _system_prompt: str
+    ) -> AsyncIterator[FakeStreamingAgent]:
         yield agent
 
     return _build
