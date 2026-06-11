@@ -27,14 +27,14 @@ async def test_filters_by_role_and_enabled(settings_env, db_url, db) -> None:
     )
     await db.commit()
 
-    user_servers = await allowed_servers(db, ["User"])
+    user_servers = await allowed_servers(db, user_id=uuid4(), roles=["User"])
     assert [s.name for s in user_servers] == ["everyone"]
 
-    admin_servers = await allowed_servers(db, ["Admin"])
+    admin_servers = await allowed_servers(db, user_id=uuid4(), roles=["Admin"])
     assert [s.name for s in admin_servers] == ["admins-only", "everyone"]
 
 
 async def test_no_roles_means_no_servers(settings_env, db_url, db) -> None:
     db.add(_server("everyone", ["Admin", "Moderator", "User"]))
     await db.commit()
-    assert await allowed_servers(db, []) == []
+    assert await allowed_servers(db, user_id=uuid4(), roles=[]) == []

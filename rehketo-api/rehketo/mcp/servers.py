@@ -4,7 +4,6 @@ chat.use_mcp_server + the server row's allowed_roles as resource_roles."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from uuid import UUID
 
 from sqlalchemy import select
 
@@ -13,17 +12,16 @@ from rehketo.permissions.dependencies import ResolvedPermissions
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-# Sentinel used when allowed_servers is called outside a user request (e.g.
-# at run-build time where we have roles but no authenticated user_id).
-_NO_USER_ID = UUID(int=0)
 
-
-async def allowed_servers(db: AsyncSession, roles: Iterable[str]) -> list[McpServer]:
+async def allowed_servers(
+    db: AsyncSession, *, user_id: UUID, roles: Iterable[str]
+) -> list[McpServer]:
     # Build a ResolvedPermissions so the single permission gate is respected.
-    perms = ResolvedPermissions(user_id=_NO_USER_ID, roles=frozenset(roles))
+    perms = ResolvedPermissions(user_id=user_id, roles=frozenset(roles))
     rows = (
         (
             await db.execute(
