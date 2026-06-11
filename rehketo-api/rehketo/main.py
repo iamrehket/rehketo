@@ -120,6 +120,7 @@ def create_app() -> FastAPI:
     from rehketo.api import auth_routes
     from rehketo.api import conversations as conversations_api
     from rehketo.api import docs as docs_api
+    from rehketo.api import mcp_servers as mcp_servers_api
     from rehketo.api import me as me_api
     from rehketo.api import messages as messages_api
     from rehketo.api import runs as runs_api
@@ -127,6 +128,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_routes.router)
     app.include_router(conversations_api.router)
     app.include_router(docs_api.router)
+    app.include_router(mcp_servers_api.router)
     app.include_router(me_api.router)
     app.include_router(messages_api.router)
     app.include_router(runs_api.router)
