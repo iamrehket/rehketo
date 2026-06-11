@@ -42,7 +42,7 @@ forbidden_modules =
     rehketo.agent
 
 [importlinter:contract:api-never-imports-mcp]
-name = api does not import mcp directly (goes through agent.run)
+name = api does not import mcp (admin routes touch only db + permissions)
 type = forbidden
 source_modules =
     rehketo.api

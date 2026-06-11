@@ -16,6 +16,7 @@ from rehketo.agent.title import generate_title_if_needed
 from rehketo.core.logging import get_logger
 from rehketo.db import sessionmaker
 from rehketo.db.models import Conversation, Message, Run, UserPreferences, UserRole
+from rehketo.mcp.registry import build_run_toolset
 from rehketo.mcp.servers import allowed_servers
 
 if TYPE_CHECKING:
@@ -120,8 +121,6 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  #
             # MCP clients live exactly as long as the agent run; the exit
             # stack closes them on every path (success, failure, cancel).
             async with contextlib.AsyncExitStack() as stack:
-                from rehketo.mcp.registry import build_run_toolset
-
                 tools = await build_run_toolset(
                     stack, servers, run_id=str(run_id), bus=bus
                 )
