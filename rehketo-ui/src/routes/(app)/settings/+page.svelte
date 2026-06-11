@@ -53,7 +53,7 @@
 			rows="8"
 			placeholder="How should the assistant behave?"
 			aria-describedby="custom-instructions-counter"
-			aria-invalid={overLimit}
+			aria-invalid={overLimit || undefined}
 			class="mt-3 w-full resize-y rounded-md border border-border bg-surface p-3 text-sm"
 		></textarea>
 		<div class="mt-2 flex items-center justify-between">

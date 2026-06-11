@@ -50,6 +50,8 @@ describe('settings page', () => {
 		expect(button?.disabled).toBe(true);
 		setTextarea('be verbose');
 		expect(button?.disabled).toBe(false);
+		const counter = document.querySelector('#custom-instructions-counter');
+		expect(counter?.textContent).toContain('10 / 4000');
 		unmount(app);
 	});
 
