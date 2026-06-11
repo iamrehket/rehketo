@@ -11,8 +11,8 @@ from rehketo.db.models import User, UserRole
 from rehketo.main import create_app
 
 
-async def _seed_session(db) -> tuple[str, str]:
-    u = User(id=uuid4(), display_name="Al", email="al@example.com")
+async def _seed_session(db, email: str | None = None) -> tuple[str, str]:
+    u = User(id=uuid4(), display_name="Al", email=email or f"{uuid4()}@example.com")
     db.add_all([u, UserRole(user_id=u.id, role="User")])
     await db.commit()
     sid = await create_session(
@@ -73,9 +73,18 @@ async def test_put_over_limit_is_422(settings_env, db_url, db) -> None:
             "/me/preferences",
             cookies={SESSION_COOKIE: sid, CSRF_COOKIE: csrf},
             headers={CSRF_HEADER: csrf},
+            json={"custom_instructions": "x" * 4000},
+        )
+        assert r.status_code == 200
+
+        r = await c.put(
+            "/me/preferences",
+            cookies={SESSION_COOKIE: sid, CSRF_COOKIE: csrf},
+            headers={CSRF_HEADER: csrf},
             json={"custom_instructions": "x" * 4001},
         )
     assert r.status_code == 422
+    assert r.json()["error"]["code"] == "validation_failed"
 
 
 async def test_get_preferences_unauthenticated_is_401(settings_env, db_url, db) -> None:
@@ -83,3 +92,21 @@ async def test_get_preferences_unauthenticated_is_401(settings_env, db_url, db) 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get("/me/preferences")
     assert r.status_code == 401
+
+
+async def test_preferences_are_per_user(settings_env, db_url, db) -> None:
+    sid_a, csrf_a = await _seed_session(db)
+    sid_b, _ = await _seed_session(db)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.put(
+            "/me/preferences",
+            cookies={SESSION_COOKIE: sid_a, CSRF_COOKIE: csrf_a},
+            headers={CSRF_HEADER: csrf_a},
+            json={"custom_instructions": "User A's secret instructions."},
+        )
+        assert r.status_code == 200
+
+        r = await c.get("/me/preferences", cookies={SESSION_COOKIE: sid_b})
+    assert r.status_code == 200
+    assert r.json() == {"custom_instructions": ""}
