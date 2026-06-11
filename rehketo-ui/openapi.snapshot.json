@@ -260,7 +260,8 @@
             "type": "boolean"
           },
           "name": {
-            "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+([_-][a-z0-9]+)*$",
             "title": "Name",
             "type": "string"
           },

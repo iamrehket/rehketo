@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import AsyncExitStack
 from typing import Any
 from uuid import uuid4
 
+import mcp.types
 from fastmcp import Client, FastMCP
 
 from rehketo.db.models import McpServer
@@ -110,3 +112,120 @@ async def test_invalid_combined_name_is_skipped(settings_env, monkeypatch) -> No
     assert "testsrv__bad.name" not in tool_names
     # good_tool passes validation — retained
     assert "testsrv__good_tool" in tool_names
+
+
+# ---------------------------------------------------------------------------
+# Item 1: fullmatch — trailing newline in tool name must be skipped
+# ---------------------------------------------------------------------------
+
+
+class _StubClient:
+    """Minimal stub client that returns a hand-constructed mcp.types.Tool list.
+
+    FastMCP refuses to register tools with control characters in their names,
+    so we bypass that by injecting the mcp.types.Tool directly via list_tools.
+    """
+
+    def __init__(self, tools: list[mcp.types.Tool]) -> None:
+        self._tools = tools
+
+    async def list_tools(self) -> list[mcp.types.Tool]:
+        return self._tools
+
+    async def __aenter__(self) -> _StubClient:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        pass
+
+
+async def test_tool_name_with_trailing_newline_is_skipped(
+    settings_env, monkeypatch
+) -> None:
+    """A tool whose name ends with \\n must be skipped — fullmatch rejects it."""
+    bad_tool = mcp.types.Tool(
+        name="bad\n",
+        inputSchema={"type": "object", "properties": {}},
+    )
+    good_tool = mcp.types.Tool(
+        name="good",
+        inputSchema={"type": "object", "properties": {}},
+    )
+    stub = _StubClient([bad_tool, good_tool])
+    monkeypatch.setattr(registry, "_client_for", lambda s: stub)
+
+    async with AsyncExitStack() as stack:
+        tools = await registry.build_run_toolset(
+            stack, [_row("testsrv")], run_id="r1", bus=FakeBus()
+        )
+
+    tool_names = [t.name for t in tools]
+    assert "testsrv__bad\n" not in tool_names
+    assert "testsrv__good" in tool_names
+
+
+# ---------------------------------------------------------------------------
+# Item 2: connect timeout — hung server is skipped, others survive
+# ---------------------------------------------------------------------------
+
+
+class _HungClient:
+    """Client whose __aenter__ never returns (simulates a hung TCP connect)."""
+
+    async def list_tools(
+        self,
+    ) -> list[mcp.types.Tool]:  # pragma: no cover - unreachable
+        raise AssertionError("should not reach list_tools")
+
+    async def __aenter__(self) -> _HungClient:
+        await asyncio.sleep(9999)
+        return self  # pragma: no cover
+
+    async def __aexit__(self, *_: object) -> None:
+        pass
+
+
+async def test_hung_server_is_skipped_others_survive(settings_env, monkeypatch) -> None:
+    """A server that hangs on connect must be skipped after the timeout; the
+    next server in the list must still contribute its tools."""
+    good = _echo_server()
+
+    def _client_for(server: McpServer) -> object:
+        if server.name == "hung":
+            return _HungClient()
+        return Client(good)
+
+    monkeypatch.setattr(registry, "_client_for", _client_for)
+    monkeypatch.setattr(registry, "_SERVER_CONNECT_TIMEOUT_S", 0.05)
+
+    async with AsyncExitStack() as stack:
+        tools = await registry.build_run_toolset(
+            stack, [_row("hung"), _row("testsrv")], run_id="r1", bus=FakeBus()
+        )
+
+    assert [t.name for t in tools] == ["testsrv__echo"]
+
+
+# ---------------------------------------------------------------------------
+# Item 4: corrupt ciphertext — decrypt_token raises, server is skipped
+# ---------------------------------------------------------------------------
+
+
+async def test_corrupt_ciphertext_server_is_skipped(settings_env) -> None:
+    """McpServer row with garbage ciphertext → decrypt_token raises inside the
+    per-server try → server skipped, result is empty list, no exception escapes."""
+    bad_row = McpServer(
+        id=uuid4(),
+        name="broken",
+        url="https://unused.example.com/mcp",
+        auth_token_ct=b"garbage",
+        allowed_roles=["User"],
+        enabled=True,
+    )
+
+    async with AsyncExitStack() as stack:
+        tools = await registry.build_run_toolset(
+            stack, [bad_row], run_id="r1", bus=FakeBus()
+        )
+
+    assert tools == []

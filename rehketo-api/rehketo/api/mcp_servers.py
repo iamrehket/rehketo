@@ -19,12 +19,16 @@ from rehketo.permissions.dependencies import ResolvedPermissions, resolve_permis
 router = APIRouter(prefix="/admin/mcp-servers", tags=["admin"])
 
 # Slug-like: the name prefixes tool names ({name}__{tool}) on the model's
-# tool list, so keep it identifier-safe and stable.
-_NAME_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
+# tool list, so keep it identifier-safe and stable.  `__` is the separator
+# between server name and tool name, so it cannot appear inside a server name
+# (server `a__b` + tool `c` would collide with server `a` + tool `b__c`).
+# Structure: alnum segments of 1+ chars joined by single _ or - chars, so
+# consecutive separators are structurally impossible.  Max length via Field.
+_NAME_PATTERN = r"^[a-z0-9]+([_-][a-z0-9]+)*$"
 
 
 class McpServerCreate(BaseModel):
-    name: str = Field(pattern=_NAME_PATTERN)
+    name: str = Field(pattern=_NAME_PATTERN, max_length=64)
     url: HttpUrl
     auth_token: str | None = Field(default=None, min_length=1)
     allowed_roles: list[str]

@@ -174,3 +174,16 @@ async def test_unknown_id_patch_and_delete_are_404(settings_env, db_url, db) -> 
         assert r.status_code == 404
         r = await c.delete(f"/admin/mcp-servers/{unknown}", **_auth(sid, csrf))
         assert r.status_code == 404
+
+
+async def test_double_underscore_in_name_is_422(settings_env, db_url, db) -> None:
+    """Server name containing __ collides with the tool-prefix separator — rejected."""
+    sid, csrf = await _seed_session(db)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            "/admin/mcp-servers",
+            json={**_CREATE_BODY, "name": "a__b"},
+            **_auth(sid, csrf),
+        )
+    assert r.status_code == 422
