@@ -72,7 +72,11 @@
 			},
 			onToolCall: (event) => {
 				// Replay can re-deliver a call already present from the GET.
-				if (!items.some((i) => i.kind === 'tool' && i.call_id === event.call_id)) {
+				if (
+					!items.some(
+						(i) => i.kind === 'tool' && i.run_id === event.run_id && i.call_id === event.call_id
+					)
+				) {
 					items = [
 						...items,
 						{
@@ -90,7 +94,7 @@
 			},
 			onToolResult: (event) => {
 				items = items.map((i) =>
-					i.kind === 'tool' && i.call_id === event.call_id
+					i.kind === 'tool' && i.run_id === event.run_id && i.call_id === event.call_id
 						? { ...i, result: event.result, is_error: event.is_error }
 						: i
 				);

@@ -4,10 +4,12 @@
 // is mocked so no EventSource is involved.
 
 import { mount, unmount } from 'svelte';
+import { flushSync } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ChatView from './ChatView.svelte';
 import { subscribeRun } from '$lib/sse';
+import type { RunStreamHandlers } from '$lib/sse';
 import type { ConversationDetail, ToolCallItem } from '$lib/types';
 
 vi.mock('$lib/sse', () => ({
@@ -73,6 +75,80 @@ describe('ChatView resume-on-open', () => {
 			props: { conversation: conversation(runId, [pendingToolItem(runId)]) }
 		});
 		expect(document.querySelector('[data-status="running"]')).not.toBeNull();
+		unmount(app);
+		document.body.innerHTML = '';
+	});
+});
+
+describe('ChatView handler routing', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('routes onToolCall/onToolResult to correct chips, dedupes replays', () => {
+		const runId = 'a0000000-0000-0000-0000-00000000000b';
+		const app = mount(ChatView, {
+			target: document.body,
+			props: { conversation: conversation(runId) }
+		});
+
+		// Capture the handlers object passed to the subscribeRun mock.
+		const handlers = vi.mocked(subscribeRun).mock.calls[0][1] as RunStreamHandlers;
+
+		// Fire onToolCall for two distinct call_ids on the same run.
+		flushSync(() => {
+			handlers.onToolCall?.({
+				type: 'tool.call',
+				run_id: runId,
+				call_id: 'call_0',
+				tool: 'testsrv__echo',
+				arguments: { text: 'a' },
+				sequence: 1
+			});
+		});
+		flushSync(() => {
+			handlers.onToolCall?.({
+				type: 'tool.call',
+				run_id: runId,
+				call_id: 'call_1',
+				tool: 'testsrv__echo',
+				arguments: { text: 'b' },
+				sequence: 2
+			});
+		});
+
+		// Resolve only the second call.
+		flushSync(() => {
+			handlers.onToolResult?.({
+				type: 'tool.result',
+				run_id: runId,
+				call_id: 'call_1',
+				result: 'ok',
+				is_error: false,
+				sequence: 3
+			});
+		});
+
+		const chips = Array.from(document.querySelectorAll('[data-status]'));
+		expect(chips).toHaveLength(2);
+		// First chip (call_0) is still running; second (call_1) is done.
+		expect(chips[0].getAttribute('data-status')).toBe('running');
+		expect(chips[1].getAttribute('data-status')).toBe('done');
+
+		// Replay of call_0 must not add a third chip (dedupe guard).
+		flushSync(() => {
+			handlers.onToolCall?.({
+				type: 'tool.call',
+				run_id: runId,
+				call_id: 'call_0',
+				tool: 'testsrv__echo',
+				arguments: { text: 'a' },
+				sequence: 4
+			});
+		});
+
+		expect(document.querySelectorAll('[data-status]')).toHaveLength(2);
+
 		unmount(app);
 		document.body.innerHTML = '';
 	});

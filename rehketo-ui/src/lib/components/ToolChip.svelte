@@ -17,13 +17,14 @@
 <details class="rounded-md border border-border bg-surface/60 text-xs" data-status={status}>
 	<summary class="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-muted">
 		{#if status === 'running'}
-			<span class="h-2 w-2 animate-pulse rounded-full bg-accent" aria-label="running"></span>
+			<span class="h-2 w-2 animate-pulse rounded-full bg-accent" role="img" aria-label="running"
+			></span>
 		{:else if status === 'error'}
-			<span class="text-danger" aria-label="failed">✗</span>
+			<span class="text-danger" role="img" aria-label="failed">✗</span>
 		{:else if status === 'incomplete'}
-			<span aria-label="no result">—</span>
+			<span role="img" aria-label="no result">—</span>
 		{:else}
-			<span aria-label="succeeded">✓</span>
+			<span role="img" aria-label="succeeded">✓</span>
 		{/if}
 		<span class="font-mono">{item.tool}</span>
 	</summary>

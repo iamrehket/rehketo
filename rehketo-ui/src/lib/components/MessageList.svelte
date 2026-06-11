@@ -37,7 +37,7 @@
 
 <div bind:this={container} class="flex-1 overflow-y-auto px-6 py-4">
 	<ul class="mx-auto flex max-w-3xl flex-col gap-4">
-		{#each items as item (item.kind === 'message' ? item.id : item.call_id)}
+		{#each items as item (item.kind === 'message' ? item.id : `${item.run_id}:${item.call_id}`)}
 			<li>
 				{#if item.kind === 'message'}
 					<MessageBubble message={item} />
