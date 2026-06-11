@@ -27,6 +27,17 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+
+async def _close_client(name: str, client: Client) -> None:  # type: ignore[type-arg]  # transport generic is irrelevant here
+    # Same stance as connect: a tool server dying mid-run must not change
+    # the run's outcome at cleanup time. close() (force-capable) rather than
+    # __aexit__, which re-raises the dead session's exception.
+    try:
+        await client.close()
+    except Exception as exc:
+        logger.warning("mcp server %s close failed: %s", name, format_exc_for_log(exc))
+
+
 # Providers constrain function-tool names (OpenAI-compatible contract).
 # Validated on the COMBINED name because server slugs alone don't bound
 # what an MCP server may call its tools.
@@ -56,7 +67,10 @@ async def build_run_toolset(
         try:
             client = _client_for(server)
             async with asyncio.timeout(_SERVER_CONNECT_TIMEOUT_S):
-                await stack.enter_async_context(client)
+                # Deliberate: skip __aexit__ to use _close_client instead,
+                # which swallows dead-session exceptions at cleanup time.
+                await client.__aenter__()
+                stack.push_async_callback(_close_client, server.name, client)
                 mcp_tools = await client.list_tools()
         except Exception as exc:
             # A broken tool server must not take chat down: skip it, the

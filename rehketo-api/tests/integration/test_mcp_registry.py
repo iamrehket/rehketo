@@ -229,3 +229,57 @@ async def test_corrupt_ciphertext_server_is_skipped(settings_env) -> None:
         )
 
     assert tools == []
+
+
+# ---------------------------------------------------------------------------
+# Item 3: dying-close stub — stack exit must NOT propagate the close error
+# ---------------------------------------------------------------------------
+
+
+class _DyingCloseClient:
+    """Stub whose __aenter__ + list_tools succeed but close() raises.
+
+    Models a tool server that dies mid-run: the transport has gone away by
+    the time we try to close it.
+    """
+
+    def __init__(self, tools: list[mcp.types.Tool]) -> None:
+        self._tools = tools
+
+    async def __aenter__(self) -> _DyingCloseClient:
+        return self
+
+    async def list_tools(self) -> list[mcp.types.Tool]:
+        return self._tools
+
+    async def close(self) -> None:
+        raise RuntimeError("transport died mid-run")
+
+    async def __aexit__(self, *_: object) -> None:
+        # Re-raises to prove the test would fail against the old code path.
+        await self.close()
+
+
+async def test_dying_close_does_not_escape_stack(settings_env, monkeypatch) -> None:
+    """Stack exit must not propagate a close() error from a mid-run server death.
+
+    The old code used stack.enter_async_context(client), which calls __aexit__
+    on unwind and re-raises the dead session's exception, flipping a succeeded
+    run to failed.  The fix uses client.__aenter__() + push_async_callback to
+    _close_client, which swallows the error.  This test fails (RuntimeError
+    escapes) against the old path and passes against the new one.
+    """
+    good_tool = mcp.types.Tool(
+        name="good",
+        inputSchema={"type": "object", "properties": {}},
+    )
+    stub = _DyingCloseClient([good_tool])
+    monkeypatch.setattr(registry, "_client_for", lambda s: stub)
+
+    # Must not raise — the tool list is built, then the stack exits cleanly
+    # despite close() raising RuntimeError.
+    async with AsyncExitStack() as stack:
+        tools = await registry.build_run_toolset(
+            stack, [_row("testsrv")], run_id="r1", bus=FakeBus()
+        )
+        assert [t.name for t in tools] == ["testsrv__good"]
