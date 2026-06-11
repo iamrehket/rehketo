@@ -15,6 +15,7 @@ from rehketo.db.models import UserRole
 from rehketo.permissions.check import check_permission
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from uuid import UUID
 
 
@@ -29,12 +30,14 @@ class ResolvedPermissions:
         *,
         resource_type: str | None = None,
         resource_id: UUID | str | None = None,
+        resource_roles: Iterable[str] | None = None,
     ) -> bool:
         return check_permission(
             self.roles,
             action,
             resource_type=resource_type,
             resource_id=resource_id,
+            resource_roles=resource_roles,
         )
 
     def require(
@@ -43,8 +46,14 @@ class ResolvedPermissions:
         *,
         resource_type: str | None = None,
         resource_id: UUID | str | None = None,
+        resource_roles: Iterable[str] | None = None,
     ) -> None:
-        if not self.can(action, resource_type=resource_type, resource_id=resource_id):
+        if not self.can(
+            action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            resource_roles=resource_roles,
+        ):
             raise HTTPException(status_code=403, detail=f"denied: {action}")
 
 

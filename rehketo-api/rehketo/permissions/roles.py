@@ -12,6 +12,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "chat.write",
             "chat.cancel_run",
             "chat.upload_files",
+            "chat.use_mcp_server",
         }
     ),
     "User": frozenset(
@@ -23,6 +24,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "chat.write",
             "chat.cancel_run",
             "chat.upload_files",
+            "chat.use_mcp_server",
         }
     ),
 }

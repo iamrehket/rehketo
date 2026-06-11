@@ -40,3 +40,59 @@ def test_check_permission_rejects_unknown_action():
         check_permission(
             {"User"}, "not.a.real.action", resource_type=None, resource_id=None
         )
+
+
+def test_use_mcp_server_requires_role_intersection() -> None:
+    assert check_permission(
+        ["User"],
+        "chat.use_mcp_server",
+        resource_type="mcp_server",
+        resource_id="00000000-0000-0000-0000-000000000001",
+        resource_roles=["User", "Admin"],
+    )
+    assert not check_permission(
+        ["User"],
+        "chat.use_mcp_server",
+        resource_type="mcp_server",
+        resource_id="00000000-0000-0000-0000-000000000001",
+        resource_roles=["Admin"],
+    )
+    assert not check_permission(
+        ["User"],
+        "chat.use_mcp_server",
+        resource_type="mcp_server",
+        resource_id="00000000-0000-0000-0000-000000000001",
+        resource_roles=[],
+    )
+
+
+def test_resource_roles_does_not_bypass_action_grant() -> None:
+    # A role named in resource_roles still needs the action itself.
+    assert not check_permission(
+        ["Guest"],
+        "chat.use_mcp_server",
+        resource_type="mcp_server",
+        resource_id=None,
+        resource_roles=["Guest"],
+    )
+
+
+def test_existing_actions_unaffected_by_default() -> None:
+    assert check_permission(
+        ["User"], "chat.write", resource_type="conversation", resource_id=None
+    )
+
+
+def test_admin_manage_mcp_servers_is_admin_only() -> None:
+    assert check_permission(
+        ["Admin"], "admin.manage_mcp_servers", resource_type=None, resource_id=None
+    )
+    assert not check_permission(
+        ["User"], "admin.manage_mcp_servers", resource_type=None, resource_id=None
+    )
+    assert not check_permission(
+        ["Moderator"],
+        "admin.manage_mcp_servers",
+        resource_type=None,
+        resource_id=None,
+    )
