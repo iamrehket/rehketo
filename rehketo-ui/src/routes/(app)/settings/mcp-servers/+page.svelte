@@ -6,8 +6,10 @@
 
 	let { data }: { data: PageData } = $props();
 
+	// Source of truth for roles: rehketo-api/rehketo/permissions/roles.py — update both when roles change.
 	const ROLES = ['Admin', 'Moderator', 'User'];
 
+	// Snapshot the server-loaded value into local state. data.servers is a one-time initialiser.
 	// svelte-ignore state_referenced_locally
 	let servers = $state<McpServerOut[]>(data.servers);
 
@@ -43,6 +45,7 @@
 			name = '';
 			url = '';
 			authToken = '';
+			allowedRoles = [...ROLES];
 			toasts.push({ variant: 'info', message: 'MCP server added.' });
 		} catch (err) {
 			fail('add', err);
