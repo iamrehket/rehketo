@@ -51,6 +51,16 @@
 			>
 				<button
 					type="button"
+					onclick={() => {
+						open = false;
+						void goto('/settings');
+					}}
+					class="block w-full px-3 py-2 text-left hover:bg-surface-hover"
+				>
+					Settings
+				</button>
+				<button
+					type="button"
 					onclick={logout}
 					class="block w-full px-3 py-2 text-left hover:bg-surface-hover"
 				>
