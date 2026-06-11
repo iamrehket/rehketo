@@ -27,6 +27,9 @@ from tests.integration._helpers import live_app
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
 
+    import pytest
+    from sqlalchemy.ext.asyncio import AsyncSession
+
 captured: dict[str, str] = {}
 
 
@@ -62,7 +65,7 @@ async def _post_and_drain(c: AsyncClient, conv_id: str, sid: str, csrf: str) -> 
                 break
 
 
-async def _seed(db, *, instructions: str | None) -> tuple[str, str, str]:
+async def _seed(db: AsyncSession, *, instructions: str | None) -> tuple[str, str, str]:
     u = User(id=uuid4(), display_name="A", email="a@x")
     db.add(u)
     await db.commit()
@@ -83,7 +86,10 @@ async def _seed(db, *, instructions: str | None) -> tuple[str, str, str]:
 
 
 async def test_run_passes_assembled_prompt(
-    settings_env, db_url, db, monkeypatch
+    settings_env: object,
+    db_url: str,
+    db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reset_registry_for_tests()
     captured.clear()
@@ -107,7 +113,10 @@ async def test_run_passes_assembled_prompt(
 
 
 async def test_run_without_preferences_uses_base_prompt(
-    settings_env, db_url, db, monkeypatch
+    settings_env: object,
+    db_url: str,
+    db: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reset_registry_for_tests()
     captured.clear()
