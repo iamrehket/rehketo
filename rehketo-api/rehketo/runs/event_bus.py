@@ -46,7 +46,8 @@ class PostgresEventBus:
         # for the same run (parallel tool calls + the delta stream loop) race
         # that read. All of a run's publishers live in this process — true
         # today and after the M4 worker split — so a process-local per-run
-        # lock is sufficient. Popped on run.ended (the guaranteed terminator).
+        # lock is sufficient. Popped when run.ended is published, success or
+        # failure.
         self._publish_locks: dict[str, asyncio.Lock] = {}
 
     async def start(self) -> None:
@@ -72,8 +73,8 @@ class PostgresEventBus:
 
     async def publish(self, run_id: str, event: dict[str, object]) -> None:
         lock = self._publish_locks.setdefault(run_id, asyncio.Lock())
-        async with lock:  # noqa: SIM117 — lock must wrap the full DB session; pop after release
-            async with sessionmaker()() as db:
+        try:
+            async with lock, sessionmaker()() as db:
                 # Sequence assigned in the INSERT; the per-run lock above
                 # serializes concurrent publishers (parallel tool calls), and
                 # the (run_id, sequence) unique constraint makes any violation
@@ -94,8 +95,9 @@ class PostgresEventBus:
                     {"chan": EVENTS_CHANNEL, "rid": run_id},
                 )
                 await db.commit()
-        if event.get("type") == "run.ended":
-            self._publish_locks.pop(run_id, None)
+        finally:
+            if event.get("type") == "run.ended":
+                self._publish_locks.pop(run_id, None)
 
     async def subscribe(
         self,
