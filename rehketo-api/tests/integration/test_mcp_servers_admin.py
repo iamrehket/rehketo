@@ -187,3 +187,32 @@ async def test_double_underscore_in_name_is_422(settings_env, db_url, db) -> Non
             **_auth(sid, csrf),
         )
     assert r.status_code == 422
+
+
+async def test_unknown_role_in_create_is_422(settings_env, db_url, db) -> None:
+    """Unknown role strings (e.g. typos like 'Usr') are rejected at the boundary."""
+    sid, csrf = await _seed_session(db)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            "/admin/mcp-servers",
+            json={**_CREATE_BODY, "allowed_roles": ["Usr"]},
+            **_auth(sid, csrf),
+        )
+    assert r.status_code == 422
+
+
+async def test_unknown_role_in_patch_is_422(settings_env, db_url, db) -> None:
+    """Unknown role strings are rejected on PATCH as well."""
+    sid, csrf = await _seed_session(db)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post("/admin/mcp-servers", json=_CREATE_BODY, **_auth(sid, csrf))
+        assert r.status_code == 201
+        server_id = r.json()["id"]
+        r = await c.patch(
+            f"/admin/mcp-servers/{server_id}",
+            json={"allowed_roles": ["Moderator", "Usr"]},
+            **_auth(sid, csrf),
+        )
+    assert r.status_code == 422

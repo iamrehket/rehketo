@@ -196,8 +196,13 @@ calls as `messages` rows writes the same fact twice.)
 - **Admin page:** a server-management page following the M2 settings-page
   pattern, visible only when `/me/capabilities` includes
   `admin.manage_mcp_servers` (capabilities come from the API — never
-  reconstructed in the frontend): server list, add/edit form (name, URL,
-  token, role multi-select, enabled toggle), delete with confirmation.
+  reconstructed in the frontend): server list, create form (name, URL,
+  token, role multi-select, enabled toggle), per-row enable/disable toggle,
+  and delete with confirmation. Editing an existing server's URL, token, or
+  roles from the UI is deferred — use delete+recreate or PATCH via API in the
+  interim. Tool chips render adjacent to the run's assistant message; live
+  streaming and reload both use the same chronological ordering from
+  `run_events`, so they are mutually consistent.
 
 ## Error handling
 

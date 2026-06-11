@@ -19,6 +19,11 @@ class PermissionError(ValueError):
     pass
 
 
+def known_roles() -> frozenset[str]:
+    """Return the set of valid role names defined in ROLE_PERMISSIONS."""
+    return frozenset(ROLE_PERMISSIONS)
+
+
 def permissions_for_roles(roles: Iterable[str]) -> frozenset[str]:
     result: set[str] = set()
     for r in roles:
