@@ -76,4 +76,24 @@ describe('groupTranscript', () => {
 		const groups = groupTranscript([tool(), msg({ id: 'a-1' })]);
 		expect(groups.map((g) => g.kind)).toEqual(['working', 'bubble']);
 	});
+
+	it('routes a thinking message with no run to a standalone bubble', () => {
+		const groups = groupTranscript([
+			msg({ content: { text: 'orphan', channel: 'thinking' }, run_id: null })
+		]);
+		expect(groups.map((g) => g.kind)).toEqual(['bubble']);
+	});
+
+	it('does not merge non-adjacent groups of the same run', () => {
+		const groups = groupTranscript([
+			tool({ run_id: 'run-1' }),
+			tool({ run_id: 'run-2' }),
+			tool({ run_id: 'run-1', call_id: 'call-2' })
+		]);
+		expect(groups.map((g) => (g.kind === 'working' ? g.runId : ''))).toEqual([
+			'run-1',
+			'run-2',
+			'run-1'
+		]);
+	});
 });
