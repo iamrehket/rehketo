@@ -13,6 +13,7 @@ from rehketo.agent.approval import resolve_interrupt
 from rehketo.agent.events import transform_chunk
 from rehketo.agent.graph import build_agent
 from rehketo.agent.prompt import assemble_system_prompt
+from rehketo.agent.segments import SegmentTracker
 from rehketo.agent.title import generate_title_if_needed
 from rehketo.core.logging import get_logger
 from rehketo.db import sessionmaker
@@ -48,6 +49,10 @@ async def _load_history(
     )
     result: list[AIMessage | HumanMessage | SystemMessage] = []
     for m in msgs:
+        if isinstance(m.content, dict) and m.content.get("channel") == "thinking":
+            # Narration is not model context — only answers feed back,
+            # matching how Anthropic drops thinking between turns.
+            continue
         text = (
             m.content if isinstance(m.content, str) else str(m.content.get("text", ""))
         )
@@ -56,6 +61,37 @@ async def _load_history(
         elif m.role == "assistant":
             result.append(AIMessage(content=text))
     return result
+
+
+def _assistant_rows(
+    segments: SegmentTracker, conversation_id: UUID, run_id: UUID
+) -> list[Message]:
+    """One Message row per AI turn. Thinking rows carry channel='thinking'
+    and their last-delta timestamp so they interleave correctly with the
+    adapter-persisted tool rows; the final turn is the answer — plain {text}
+    content, created_at left to the DB default. An empty run still persists
+    the single empty answer row (it marks that an attempt happened)."""
+    rows = [
+        Message(
+            id=uuid4(),
+            conversation_id=conversation_id,
+            role="assistant",
+            content={"text": seg.text, "channel": "thinking"},
+            run_id=run_id,
+            created_at=seg.last_delta_at,
+        )
+        for seg in segments.thinking
+    ]
+    rows.append(
+        Message(
+            id=uuid4(),
+            conversation_id=conversation_id,
+            role="assistant",
+            content={"text": segments.answer_text},
+            run_id=run_id,
+        )
+    )
+    return rows
 
 
 async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR0912,PLR0915  # orchestrator: resume loop + three terminal branches is the simplest correct shape
@@ -80,7 +116,7 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
         conversation_id: UUID = run.conversation_id
         user_id: UUID = run.user_id
 
-    assembled_text = ""
+    segments = SegmentTracker()
 
     try:
         try:
@@ -139,7 +175,9 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                             for event in transform_chunk(chunk):  # type: ignore[arg-type]
                                 await bus.publish(str(run_id), event)
                                 if event["type"] == "message.delta":
-                                    assembled_text += str(event["delta"])
+                                    segments.add_delta(
+                                        event.get("message_id"), str(event["delta"])
+                                    )
                         if not interrupt_on:
                             # No HITL middleware installed — the graph cannot
                             # interrupt, so skip the checkpoint read.
@@ -151,18 +189,11 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                             break
                         stream_input = resume
 
-            # Persist the assistant message and finalize the run.
-            assistant_id = uuid4()
+            # Persist one assistant row per AI turn and finalize the run.
+            rows = _assistant_rows(segments, conversation_id, run_id)
             async with sessionmaker()() as db:
-                db.add(
-                    Message(
-                        id=assistant_id,
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content={"text": assembled_text},
-                        run_id=run_id,
-                    )
-                )
+                for row in rows:
+                    db.add(row)
                 await db.execute(
                     update(Run)
                     .where(Run.id == run_id)
@@ -177,33 +208,38 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                     .values(updated_at=datetime.now(UTC))
                 )
                 await db.commit()
-                # Re-read the persisted message so the wire shape matches the
-                # MessageOut that GET /conversations/{id} returns. The UI can
-                # then replace its streaming bubble with a server-authoritative
-                # object (same id, same created_at on reload).
-                persisted = (
-                    await db.execute(select(Message).where(Message.id == assistant_id))
-                ).scalar_one()
-                message_payload: dict[str, object] = {
-                    "id": str(persisted.id),
-                    "conversation_id": str(persisted.conversation_id),
-                    "role": persisted.role,
-                    "content": persisted.content,
-                    "run_id": str(persisted.run_id) if persisted.run_id else None,
-                    "created_at": persisted.created_at.isoformat()
-                    if persisted.created_at
-                    else None,
-                    "run_status": "succeeded",
-                    "run_error": None,
-                }
+                # Refresh each row so the wire shape matches the MessageOut
+                # that GET /conversations/{id} returns (DB-assigned
+                # created_at on the answer row). The UI replaces its
+                # streaming state with these server-authoritative objects.
+                message_payloads: list[dict[str, object]] = []
+                for row in rows:
+                    await db.refresh(row)
+                    message_payloads.append(
+                        {
+                            "id": str(row.id),
+                            "conversation_id": str(row.conversation_id),
+                            "role": row.role,
+                            "content": row.content,
+                            "run_id": str(row.run_id) if row.run_id else None,
+                            "created_at": row.created_at.isoformat()
+                            if row.created_at
+                            else None,
+                            "run_status": "succeeded",
+                            "run_error": None,
+                        }
+                    )
 
-            await bus.publish(
-                str(run_id),
-                {
-                    "type": "message.complete",
-                    "message": message_payload,
-                },
-            )
+            # Thinking rows first, answer last — the UI ends its streaming
+            # bubble on the answer's complete.
+            for payload in message_payloads:
+                await bus.publish(
+                    str(run_id),
+                    {
+                        "type": "message.complete",
+                        "message": payload,
+                    },
+                )
 
             # Emit succeeded eagerly so the UI clears its 'running' indicator as
             # soon as the reply is complete — before the title-generation window.
@@ -241,18 +277,12 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
             # `finally` then publishes run.ended after the shielded work completes.
             async def _finalize_cancel() -> None:
                 async with sessionmaker()() as db:
-                    # Persist the partial assistant text, same rationale as the
-                    # failed branch — reload shows a 'cancelled' badge via the
+                    # Persist the segments under the same rule as success —
+                    # completed turns as thinking, the partial tail as the
+                    # answer. Reload shows a 'cancelled' badge via the
                     # run_status join on MessageOut.
-                    db.add(
-                        Message(
-                            id=uuid4(),
-                            conversation_id=conversation_id,
-                            role="assistant",
-                            content={"text": assembled_text},
-                            run_id=run_id,
-                        )
-                    )
+                    for row in _assistant_rows(segments, conversation_id, run_id):
+                        db.add(row)
                     await db.execute(
                         update(Run)
                         .where(Run.id == run_id)
@@ -281,20 +311,13 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
             # is NOT a subclass of Exception in Python 3.8+, so it is not caught here.
             logger.exception("run_agent failed run_id=%s", str(run_id))
             async with sessionmaker()() as db:
-                # Persist whatever partial assistant text the stream produced.
-                # GET /conversations/{id} joins Run.status/Run.error so the UI
-                # can render this bubble with a 'failed' badge on reload without
-                # replaying the SSE stream. Empty text is fine — it still marks
-                # that an attempt happened.
-                db.add(
-                    Message(
-                        id=uuid4(),
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content={"text": assembled_text},
-                        run_id=run_id,
-                    )
-                )
+                # Persist whatever partial segments the stream produced —
+                # same thinking/answer rule as success. GET /conversations/{id}
+                # joins Run.status/Run.error so the UI renders the answer row
+                # with a 'failed' badge on reload. Empty text is fine — it
+                # still marks that an attempt happened.
+                for row in _assistant_rows(segments, conversation_id, run_id):
+                    db.add(row)
                 await db.execute(
                     update(Run)
                     .where(Run.id == run_id)
