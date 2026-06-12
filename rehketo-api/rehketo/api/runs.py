@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import json
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Literal
 from uuid import UUID  # noqa: TC003  # used at runtime in Pydantic model + route path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import (
 from sse_starlette.sse import EventSourceResponse
 
 from rehketo.db import get_session
-from rehketo.db.models import Run
+from rehketo.db.models import Run, RunEvent
 from rehketo.permissions.dependencies import ResolvedPermissions, resolve_permissions
 from rehketo.runs.cancellation import TERMINAL_RUN_STATES, request_cancel
 
@@ -132,3 +132,66 @@ async def cancel_run(
     if not await request_cancel(db, run_id):
         # Run went terminal between the check above and the UPDATE.
         raise HTTPException(status_code=409, detail="run already terminal")
+
+
+class ApprovalDecisionIn(BaseModel):
+    decision: Literal["approve", "deny"]
+
+
+@router.post("/{run_id}/approvals/{approval_id}", status_code=204)
+async def decide_approval(
+    run_id: UUID,
+    approval_id: str,
+    payload: ApprovalDecisionIn,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_session)],
+    perms: Annotated[ResolvedPermissions, Depends(resolve_permissions)],
+) -> None:
+    """Record the user's decision for one pending tool call. The decision is
+    published as a durable tool.approval_decision event; the waiting run task
+    consumes it from its own bus subscription. First decision wins (409 on a
+    repeat); validation is against run_events, the single source of truth."""
+    perms.require(
+        "chat.approve_tool_call",
+        resource_type="run",
+        resource_id=run_id,
+    )
+    run = (
+        await db.execute(
+            select(Run).where(Run.id == run_id, Run.user_id == perms.user_id)
+        )
+    ).scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if run.status != "pending_approval":
+        raise HTTPException(
+            status_code=409, detail=f"run is {run.status}, not pending approval"
+        )
+    rows = (
+        (
+            await db.execute(
+                select(RunEvent.payload).where(
+                    RunEvent.run_id == run_id,
+                    RunEvent.payload["type"].astext.in_(
+                        ["tool.approval_required", "tool.approval_decision"]
+                    ),
+                    RunEvent.payload["approval_id"].astext == approval_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    types = {p["type"] for p in rows}
+    if "tool.approval_required" not in types:
+        raise HTTPException(status_code=404, detail="approval not found")
+    if "tool.approval_decision" in types:
+        raise HTTPException(status_code=409, detail="approval already decided")
+    await request.app.state.event_bus.publish(
+        str(run_id),
+        {
+            "type": "tool.approval_decision",
+            "approval_id": approval_id,
+            "decision": payload.decision,
+        },
+    )

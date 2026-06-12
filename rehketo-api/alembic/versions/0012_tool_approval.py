@@ -47,6 +47,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Rows in pending_approval cannot satisfy the old constraint — move them to
+    # failed so the constraint addition succeeds without data loss ambiguity.
+    op.execute("UPDATE runs SET status = 'failed' WHERE status = 'pending_approval'")
     op.drop_constraint("runs_status_enum", "runs", type_="check")
     op.create_check_constraint("runs_status_enum", "runs", f"status in {_STATUSES_OLD}")
     op.drop_column("mcp_servers", "auto_approve")
