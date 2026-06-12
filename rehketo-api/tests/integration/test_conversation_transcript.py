@@ -305,7 +305,11 @@ async def test_transcript_pending_approval_has_null_decision(
     items = r.json()["items"]
     approval_items = [i for i in items if i["kind"] == "approval"]
     assert len(approval_items) == 1
-    assert approval_items[0]["decision"] is None
+    item = approval_items[0]
+    assert item["decision"] is None
+    assert item["approval_id"] == "ap-1"
+    assert item["tool"] == "testsrv__echo"
+    assert item["arguments"] == {"text": "hi"}
 
 
 async def test_call_without_result_is_pending(settings_env, db_url, db) -> None:

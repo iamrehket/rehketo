@@ -100,11 +100,12 @@ class ConversationDetail(ConversationSummary):
     # Chronologically interleaved transcript — messages + tool activity
     # reconstructed from run_events. Replaces the old `messages` field.
     items: list[TranscriptItem]
-    # In-flight run for this conversation (queued/running), newest first.
-    # The UI uses this to reattach to the live SSE stream on open.
-    # Best-effort: a run abandoned by a process crash stays queued/running
-    # until the next startup sweep, so this can briefly point at a dead run —
-    # the subscriber then just waits and the sweep's closure events end it.
+    # In-flight run for this conversation (queued/running/pending_approval),
+    # newest first. The UI uses this to reattach to the live SSE stream on open.
+    # Best-effort: a run abandoned by a process crash stays
+    # queued/running/pending_approval until the next startup sweep, so this can
+    # briefly point at a dead run — the subscriber then just waits and the
+    # sweep's closure events end it.
     active_run_id: UUID | None = None
 
 
@@ -171,7 +172,8 @@ async def _approval_items(
 ) -> list[ApprovalItem]:
     """Reconstruct ApprovalItem entries from run_events, mirroring
     _tool_items: approval_required seeds, approval_decision (same run_id +
-    approval_id) fills in the decision."""
+    approval_id) fills in the decision. Same unindexed-JSONB growth caveat
+    as _tool_items — apply any future remedy to both."""
     rows = (
         await db.execute(
             select(RunEvent.run_id, RunEvent.payload, RunEvent.created_at)
