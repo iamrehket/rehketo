@@ -463,6 +463,49 @@ describe('subscribeRun', () => {
 		});
 	});
 
+	test('dispatches approval events to handlers and keeps streaming through pending_approval', () => {
+		const required: RunEvent[] = [];
+		const decisions: RunEvent[] = [];
+		const statuses: string[] = [];
+		const sub = subscribeRun(
+			'run-1',
+			{
+				onApprovalRequired: (e) => required.push(e),
+				onApprovalDecision: (e) => decisions.push(e),
+				onStatus: (status) => statuses.push(status)
+			},
+			{ EventSourceImpl: MockEventSource as unknown as new (url: string) => EventSource }
+		);
+		const source = MockEventSource.instances.at(-1)!;
+		source.emitEvent({
+			type: 'tool.approval_required',
+			approval_id: 'ap-1',
+			tool: 'testsrv__echo',
+			arguments: { text: 'hi' },
+			sequence: 1,
+			run_id: 'run-1'
+		});
+		source.emitEvent({
+			type: 'run.status',
+			status: 'pending_approval',
+			sequence: 2,
+			run_id: 'run-1'
+		});
+		expect(sub.state).toBe('running'); // paused-for-approval is still a live stream
+		source.emitEvent({
+			type: 'tool.approval_decision',
+			approval_id: 'ap-1',
+			decision: 'approve',
+			sequence: 3,
+			run_id: 'run-1'
+		});
+		expect(required).toHaveLength(1);
+		expect(required[0]).toMatchObject({ approval_id: 'ap-1', tool: 'testsrv__echo' });
+		expect(decisions).toHaveLength(1);
+		expect(statuses).toContain('pending_approval');
+		sub.unsubscribe();
+	});
+
 	test('tool flow: tool.call and tool.result reach handlers and track sequence', () => {
 		const c = collectHandlers();
 		const sub = subscribeRun('run-1', c.handlers, {

@@ -19,6 +19,7 @@ function server(overrides: Partial<McpServerOut> = {}): McpServerOut {
 		has_auth_token: true,
 		allowed_roles: ['Admin', 'User'],
 		enabled: true,
+		auto_approve: false,
 		created_at: '2026-06-11T00:00:00Z',
 		updated_at: '2026-06-11T00:00:00Z',
 		...overrides

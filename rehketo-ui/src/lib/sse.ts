@@ -9,6 +9,9 @@
 // tool.call / tool.result interleave with deltas on any flow — they
 // come from the same agent stream loop, not a separate success path.
 //
+// tool.approval_required pauses the run (run.status=pending_approval)
+// until a tool.approval_decision arrives; the stream stays open throughout.
+//
 // The backend emits SSE frames with an `event:` field set to the event
 // type (e.g. `event: message.delta`). Browsers dispatch those as custom
 // DOM events of that name — NOT as generic `message` events — so we must
@@ -48,6 +51,8 @@ export type RunStreamHandlers = {
 	onConversationUpdated?: (conversationId: string, title: string) => void;
 	onToolCall?: (event: Extract<RunEvent, { type: 'tool.call' }>) => void;
 	onToolResult?: (event: Extract<RunEvent, { type: 'tool.result' }>) => void;
+	onApprovalRequired?: (event: Extract<RunEvent, { type: 'tool.approval_required' }>) => void;
+	onApprovalDecision?: (event: Extract<RunEvent, { type: 'tool.approval_decision' }>) => void;
 	onEnded?: () => void;
 	onError?: (err: unknown) => void;
 };
@@ -192,6 +197,20 @@ export function subscribeRun(
 			handlers.onToolResult?.(event);
 		});
 
+		self.addEventListener('tool.approval_required', (evt) => {
+			const event = parseOrError<Extract<RunEvent, { type: 'tool.approval_required' }>>(evt);
+			if (!event) return;
+			track(event);
+			handlers.onApprovalRequired?.(event);
+		});
+
+		self.addEventListener('tool.approval_decision', (evt) => {
+			const event = parseOrError<Extract<RunEvent, { type: 'tool.approval_decision' }>>(evt);
+			if (!event) return;
+			track(event);
+			handlers.onApprovalDecision?.(event);
+		});
+
 		self.addEventListener('run.status', (evt) => {
 			const event = parseOrError<Extract<RunEvent, { type: 'run.status' }>>(evt);
 			if (!event) return;
@@ -200,6 +219,9 @@ export function subscribeRun(
 			if (event.status === 'queued') {
 				if (sub.state === 'idle') sub.state = 'queued';
 			} else if (event.status === 'running') {
+				sub.state = 'running';
+			} else if (event.status === 'pending_approval') {
+				// Paused for a user decision — the stream stays live.
 				sub.state = 'running';
 			} else if (event.status === 'succeeded') {
 				sub.state = 'terminalSucceeded';
