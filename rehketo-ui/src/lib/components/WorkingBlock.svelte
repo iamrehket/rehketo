@@ -22,10 +22,33 @@
 		entries.some((e) => e.kind === 'approval' && e.item.decision === null)
 	);
 	let label = $derived(`Working… (${entries.length} ${entries.length === 1 ? 'step' : 'steps'})`);
+
+	// The user's manual toggle wins over auto-open — except a pending
+	// approval, which pins the block open (the decision buttons are inside).
+	let userToggled = $state<boolean | null>(null);
+	let open = $derived((userToggled ?? live) || pendingApproval);
+
+	function handleToggle(e: Event & { currentTarget: HTMLDetailsElement }): void {
+		const el = e.currentTarget;
+		const domOpen = el.open;
+		// A pending approval pins the block open — the decision buttons are
+		// inside and must remain reachable. Force the element back open
+		// immediately and do not record a user toggle.
+		if (pendingApproval && !domOpen) {
+			el.open = true;
+			return;
+		}
+		// Ignore toggle events that merely echo the auto-driven state;
+		// a real user click is the one that disagrees with it.
+		if (domOpen !== ((userToggled ?? live) || pendingApproval)) {
+			userToggled = domOpen;
+		}
+	}
 </script>
 
 <details
-	open={live || pendingApproval}
+	{open}
+	ontoggle={handleToggle}
 	data-working
 	class="rounded-md border border-border bg-surface/40 text-xs text-muted"
 >

@@ -44,6 +44,9 @@
 
 <div bind:this={container} class="flex-1 overflow-y-auto px-6 py-4">
 	<ul class="mx-auto flex max-w-3xl flex-col gap-4">
+		<!-- The index is intentional: runId alone collides when the same run
+		     produces non-adjacent working groups (e.g. tool → answer → tool).
+		     See the edge-case in transcript.spec.ts. -->
 		{#each groups as group, i (group.kind === 'bubble' ? group.item.id : `working:${group.runId}:${i}`)}
 			<li>
 				{#if group.kind === 'bubble'}
