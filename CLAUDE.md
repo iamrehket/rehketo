@@ -90,6 +90,9 @@ uv run mypy rehketo
 uv run bandit -r rehketo
 uv run lint-imports
 uv run pytest
+uv run pytest -m e2e   # offline browser suite; needs postgres up (just db). Opt-in by
+                       # marker, so it silently rotted through the M3 `messages`→`items`
+                       # rename — run it whenever you touch wire shapes or the UI flows.
 uv run python ../tools/check_contract.py
 ```
 
