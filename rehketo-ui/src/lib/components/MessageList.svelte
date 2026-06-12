@@ -1,8 +1,8 @@
 <script lang="ts">
 	import AssistantBubble from './AssistantBubble.svelte';
-	import ApprovalCard from './ApprovalCard.svelte';
 	import MessageBubble from './MessageBubble.svelte';
-	import ToolChip from './ToolChip.svelte';
+	import WorkingBlock from './WorkingBlock.svelte';
+	import { groupTranscript } from '$lib/transcript';
 	import type { ApprovalItem, RunStatus, TranscriptItem } from '$lib/types';
 
 	let {
@@ -38,21 +38,22 @@
 	let isActivelyStreaming = $derived(
 		streamingStatus === null || streamingStatus === 'queued' || streamingStatus === 'running'
 	);
+
+	let groups = $derived(groupTranscript(items));
 </script>
 
 <div bind:this={container} class="flex-1 overflow-y-auto px-6 py-4">
 	<ul class="mx-auto flex max-w-3xl flex-col gap-4">
-		{#each items as item (item.kind === 'message' ? item.id : item.kind === 'tool' ? `${item.run_id}:${item.call_id}` : `${item.run_id}:${item.approval_id}`)}
+		{#each groups as group, i (group.kind === 'bubble' ? group.item.id : `working:${group.runId}:${i}`)}
 			<li>
-				{#if item.kind === 'message'}
-					<MessageBubble message={item} />
-				{:else if item.kind === 'tool'}
-					<ToolChip {item} live={item.run_id === liveRunId} />
-				{:else if item.kind === 'approval'}
-					<ApprovalCard
-						{item}
-						canDecide={canDecide && item.run_id === liveRunId}
-						onDecide={(decision) => onDecide?.(item, decision)}
+				{#if group.kind === 'bubble'}
+					<MessageBubble message={group.item} />
+				{:else}
+					<WorkingBlock
+						entries={group.entries}
+						live={group.runId === liveRunId}
+						canDecide={canDecide && group.runId === liveRunId}
+						{onDecide}
 					/>
 				{/if}
 			</li>
