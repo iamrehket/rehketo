@@ -17,6 +17,7 @@
 	let url = $state('');
 	let authToken = $state('');
 	let allowedRoles = $state<string[]>([...ROLES]);
+	let autoApprove = $state(false);
 	let busy = $state(false);
 
 	function fail(action: string, err: unknown): void {
@@ -38,7 +39,8 @@
 					url,
 					auth_token: authToken || null,
 					allowed_roles: allowedRoles,
-					enabled: true
+					enabled: true,
+					auto_approve: autoApprove
 				})
 			});
 			servers = [created, ...servers];
@@ -46,6 +48,7 @@
 			url = '';
 			authToken = '';
 			allowedRoles = [...ROLES];
+			autoApprove = false;
 			toasts.push({ variant: 'info', message: 'MCP server added.' });
 		} catch (err) {
 			fail('add', err);
@@ -59,6 +62,18 @@
 			const updated = await apiFetch<McpServerOut>(`/admin/mcp-servers/${server.id}`, {
 				method: 'PATCH',
 				body: JSON.stringify({ enabled: !server.enabled })
+			});
+			servers = servers.map((s) => (s.id === updated.id ? updated : s));
+		} catch (err) {
+			fail('update', err);
+		}
+	}
+
+	async function toggleAutoApprove(server: McpServerOut): Promise<void> {
+		try {
+			const updated = await apiFetch<McpServerOut>(`/admin/mcp-servers/${server.id}`, {
+				method: 'PATCH',
+				body: JSON.stringify({ auto_approve: !server.auto_approve })
 			});
 			servers = servers.map((s) => (s.id === updated.id ? updated : s));
 		} catch (err) {
@@ -80,8 +95,9 @@
 <div class="mx-auto w-full max-w-2xl overflow-y-auto px-6 py-8">
 	<h1 class="text-lg font-semibold">MCP servers</h1>
 	<p class="mt-1 text-sm text-muted">
-		External tool servers available to agent runs. Granted roles get all of a server's tools;
-		disable to take a server offline without deleting it.
+		External tool servers available to agent runs. Granted roles get all of a server's tools; tool
+		calls require per-call user approval unless auto-approve is on. Disable to take a server offline
+		without deleting it.
 	</p>
 
 	<ul class="mt-6 flex flex-col gap-3">
@@ -95,7 +111,8 @@
 						{/if}
 						<p class="text-xs text-muted">{server.url}</p>
 						<p class="text-xs text-muted">
-							roles: {server.allowed_roles.join(', ')}{#if server.has_auth_token}&nbsp;· token set{/if}
+							roles: {server.allowed_roles.join(', ')}{#if server.has_auth_token}&nbsp;· token set{/if}{#if server.auto_approve}&nbsp;·
+								auto-approve{/if}
 						</p>
 					</div>
 					<div class="flex gap-2">
@@ -106,6 +123,14 @@
 							class="rounded-md border border-border px-2 py-1 text-xs hover:bg-surface-hover"
 						>
 							{server.enabled ? 'Disable' : 'Enable'}
+						</button>
+						<button
+							type="button"
+							data-action="toggle-auto-approve"
+							onclick={() => toggleAutoApprove(server)}
+							class="rounded-md border border-border px-2 py-1 text-xs hover:bg-surface-hover"
+						>
+							{server.auto_approve ? 'Require approval' : 'Auto-approve'}
 						</button>
 						<button
 							type="button"
@@ -157,6 +182,10 @@
 					</label>
 				{/each}
 			</fieldset>
+			<label class="flex items-center gap-2 text-sm">
+				<input id="mcp-auto-approve" type="checkbox" bind:checked={autoApprove} />
+				Auto-approve tool calls (trusted server — skips per-call user approval)
+			</label>
 			<button
 				id="mcp-create"
 				type="button"

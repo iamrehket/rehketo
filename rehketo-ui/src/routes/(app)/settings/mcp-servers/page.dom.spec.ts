@@ -143,6 +143,56 @@ describe('MCP servers admin page', () => {
 		unmount(app);
 	});
 
+	it('create sends auto_approve in POST body', async () => {
+		vi.mocked(apiFetch).mockResolvedValueOnce(server({ name: 'newsrv', auto_approve: true }));
+		const app = mount(Page, {
+			target: document.body,
+			props: { data: { authenticated: true, servers: [] } }
+		});
+
+		const nameInput = document.querySelector('#mcp-name') as HTMLInputElement;
+		nameInput.value = 'newsrv';
+		nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+
+		const urlInput = document.querySelector('#mcp-url') as HTMLInputElement;
+		urlInput.value = 'https://new.example.com/mcp';
+		urlInput.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+
+		(document.querySelector('#mcp-auto-approve') as HTMLInputElement).click();
+		flushSync();
+
+		(document.querySelector('#mcp-create') as HTMLButtonElement).click();
+		await vi.waitFor(() => {
+			expect(apiFetch).toHaveBeenCalledWith(
+				'/admin/mcp-servers',
+				expect.objectContaining({ method: 'POST' })
+			);
+			const body = JSON.parse((vi.mocked(apiFetch).mock.calls[0][1] as { body: string }).body);
+			expect(body.auto_approve).toBe(true);
+		});
+		unmount(app);
+	});
+
+	it('row toggle PATCHes auto_approve', async () => {
+		vi.mocked(apiFetch).mockResolvedValueOnce(server({ auto_approve: true }));
+		const app = mount(Page, {
+			target: document.body,
+			props: { data: { authenticated: true, servers: [server({ auto_approve: false })] } }
+		});
+		(document.querySelector('[data-action="toggle-auto-approve"]') as HTMLButtonElement).click();
+		await vi.waitFor(() => {
+			expect(apiFetch).toHaveBeenCalledWith(
+				'/admin/mcp-servers/s0000000-0000-0000-0000-000000000001',
+				expect.objectContaining({ method: 'PATCH' })
+			);
+			const body = JSON.parse((vi.mocked(apiFetch).mock.calls[0][1] as { body: string }).body);
+			expect(body).toEqual({ auto_approve: true });
+		});
+		unmount(app);
+	});
+
 	it('pushes an error toast when create fails', async () => {
 		const { ApiError } = await import('$lib/types');
 		vi.mocked(apiFetch).mockRejectedValueOnce(
