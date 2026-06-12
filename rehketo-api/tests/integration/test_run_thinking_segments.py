@@ -150,3 +150,53 @@ async def test_two_turn_run_persists_thinking_and_answer_rows(
     async with sessionmaker()() as s:
         history = await _load_history(s, conv_id)
     assert [m.content for m in history] == ["It is sunny."]
+
+
+async def test_failed_run_persists_segments_under_same_rule(
+    settings_env, db_url, db, monkeypatch
+) -> None:
+    """A mid-run failure persists completed turns as thinking and the
+    partial tail as the answer — same rule as success."""
+
+    class _FailingAgent:
+        async def astream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any]:
+            yield (AIMessageChunk(content="narration", id="turn-1"), {})
+            yield (AIMessageChunk(content="partial answ", id="turn-2"), {})
+            raise RuntimeError("provider exploded")
+
+    async def _fake_build_agent(
+        run_id: str,
+        system_prompt: str,
+        tools: Sequence[Any] = (),
+        interrupt_on: Any = None,
+    ) -> AsyncIterator[_FailingAgent]:
+        yield _FailingAgent()
+
+    monkeypatch.setattr(run_mod, "build_agent", _fake_build_agent)
+
+    run_id, _conv_id = await _seed(db)
+    bus = PostgresEventBus()
+    await run_mod.run_agent(run_id, bus)
+
+    async with sessionmaker()() as s:
+        status = (
+            await s.execute(
+                text("SELECT status FROM runs WHERE id = :rid"),
+                {"rid": str(run_id)},
+            )
+        ).scalar_one()
+        msg_rows = (
+            await s.execute(
+                text(
+                    "SELECT content FROM messages "
+                    "WHERE run_id = :rid AND role = 'assistant' "
+                    "ORDER BY created_at"
+                ),
+                {"rid": str(run_id)},
+            )
+        ).all()
+
+    assert status == "failed"
+    assert len(msg_rows) == 2
+    assert msg_rows[0].content == {"text": "narration", "channel": "thinking"}
+    assert msg_rows[1].content == {"text": "partial answ"}

@@ -70,7 +70,16 @@ def _assistant_rows(
     and their last-delta timestamp so they interleave correctly with the
     adapter-persisted tool rows; the final turn is the answer — plain {text}
     content, created_at left to the DB default. An empty run still persists
-    the single empty answer row (it marks that an attempt happened)."""
+    the single empty answer row (it marks that an attempt happened).
+
+    Clock-source note: thinking rows are stamped with ``seg.last_delta_at``
+    (app-process clock) while the answer row and tool run_events use Postgres
+    ``func.now()`` (DB clock). The transcript GET sorts across both, which
+    works because the API and Postgres share the same host and their clocks
+    are closely synced. Revisit with a per-run sequence column if hosts split.
+    Two thinking rows can theoretically tie at microsecond resolution —
+    accepted; the symptom is two narration blobs swapping inside the Working
+    block, not data loss."""
     rows = [
         Message(
             id=uuid4(),
@@ -78,7 +87,7 @@ def _assistant_rows(
             role="assistant",
             content={"text": seg.text, "channel": "thinking"},
             run_id=run_id,
-            created_at=seg.last_delta_at,
+            created_at=seg.last_delta_at,  # app clock; see clock-source note above
         )
         for seg in segments.thinking
     ]
