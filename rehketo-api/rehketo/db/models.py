@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -142,6 +143,9 @@ class McpServer(Base):
     auth_token_ct: Mapped[bytes | None] = mapped_column(LargeBinary)
     allowed_roles: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    auto_approve: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -198,7 +202,8 @@ class Run(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status in ('queued','running','succeeded','failed','cancelled')",
+            "status in ('queued','running','pending_approval',"
+            "'succeeded','failed','cancelled')",
             name="runs_status_enum",
         ),
     )
