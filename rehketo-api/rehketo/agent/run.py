@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from sqlalchemy import select, update
 
+from rehketo.agent.approval import resolve_interrupt
 from rehketo.agent.events import transform_chunk
 from rehketo.agent.graph import build_agent
 from rehketo.agent.prompt import assemble_system_prompt
@@ -57,7 +58,7 @@ async def _load_history(
     return result
 
 
-async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  # orchestrator: three terminal branches in one function is the simplest correct shape
+async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR0912,PLR0915  # orchestrator: resume loop + three terminal branches is the simplest correct shape
     """Drive the agent for `run_id`. Called as an asyncio.Task.
 
     Terminal-event discipline: the SSE handler (and the UI's `subscribeRun`)
@@ -127,15 +128,28 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  #
                 async for agent in build_agent(
                     str(run_id), system_prompt, tools=tools, interrupt_on=interrupt_on
                 ):
-                    async for chunk in agent.astream(
-                        {"messages": history},
-                        config={"configurable": {"thread_id": str(run_id)}},
-                        stream_mode="messages",
-                    ):
-                        for event in transform_chunk(chunk):  # type: ignore[arg-type]
-                            await bus.publish(str(run_id), event)
-                            if event["type"] == "message.delta":
-                                assembled_text += str(event["delta"])
+                    config: Any = {"configurable": {"thread_id": str(run_id)}}
+                    stream_input: Any = {"messages": history}
+                    while True:
+                        async for chunk in agent.astream(
+                            stream_input,
+                            config=config,
+                            stream_mode="messages",
+                        ):
+                            for event in transform_chunk(chunk):  # type: ignore[arg-type]
+                                await bus.publish(str(run_id), event)
+                                if event["type"] == "message.delta":
+                                    assembled_text += str(event["delta"])
+                        if not interrupt_on:
+                            # No HITL middleware installed — the graph cannot
+                            # interrupt, so skip the checkpoint read.
+                            break
+                        resume = await resolve_interrupt(
+                            agent, config, run_id=run_id, bus=bus
+                        )
+                        if resume is None:
+                            break
+                        stream_input = resume
 
             # Persist the assistant message and finalize the run.
             assistant_id = uuid4()
