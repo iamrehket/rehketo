@@ -71,10 +71,13 @@ tool traffic. Unit tests switch from duck-typed fakes to real
 ### `rehketo/agent/run.py`
 
 `assembled_text` (a string) becomes a segment tracker: an ordered list of
-`(message_id, text, closed_at)`. Each delta appends to the current segment;
-a delta with a new `message_id` closes the current segment, stamping
-`closed_at = now()` so its `created_at` interleaves correctly with the
-adapter-persisted tool rows.
+`(message_id, text, last_delta_at)`. Each delta appends to the current
+segment; a delta with a new `message_id` closes the current segment. The
+segment's persisted `created_at` is its **last-delta time** (updated on
+every delta), because the boundary is only detectable at the next segment's
+first delta — after the tool rows were written. The last token of a turn
+always precedes its `tool.call` publish, so last-delta time interleaves
+correctly with the adapter-persisted tool rows.
 
 At finalize (all three terminal branches):
 
@@ -101,11 +104,13 @@ shape change beyond the optional content key.
 
 ### Live streaming (`ChatView.svelte`)
 
-`streamingText: string | null` becomes a segment list
-`{ messageId: string; text: string }[]` driven by `onDelta`'s
-`event.message_id`. The last segment renders as the normal streaming bubble.
-Earlier segments — plus the live run's tool chips and approval cards —
-render inside the Working block. Terminal fold-in for failed/cancelled runs
+`streamingText` keeps only the current segment (paired with
+`streamingMessageId`). A finished segment folds into a local thinking
+transcript item the moment a `tool.call`, `tool.approval_required`, or
+new-`message_id` delta proves the turn ended — so it renders inside the
+Working block above the activity it led to, and persisted rows replace the
+local items on `message.complete`. The current segment renders as the
+normal streaming bubble. Terminal fold-in for failed/cancelled runs
 follows the same last-segment-is-answer rule. Streaming state clears when
 the answer's `message.complete` arrives (it is published last), not on the
 thinking rows' completes — the dedupe-by-id append handles those.
