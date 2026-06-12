@@ -76,3 +76,18 @@ async def test_blocks_until_decided() -> None:
     with pytest.raises(TimeoutError):
         async with asyncio.timeout(0.1):
             await wait_for_decisions(bus, "r1", ["a1"])
+
+
+async def test_out_of_order_decisions_keyed_correctly() -> None:
+    bus = FakeBus(
+        [
+            {"type": "tool.approval_decision", "approval_id": "a2", "decision": "deny"},
+            {
+                "type": "tool.approval_decision",
+                "approval_id": "a1",
+                "decision": "approve",
+            },
+        ]
+    )
+    decisions = await wait_for_decisions(bus, "r1", ["a1", "a2"])
+    assert decisions == {"a1": "approve", "a2": "deny"}

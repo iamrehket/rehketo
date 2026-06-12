@@ -105,6 +105,9 @@ async def wait_for_decisions(
 
 async def _set_status(run_id: UUID, status: str, bus: RunEventBus) -> None:
     async with sessionmaker()() as db:
+        # Unconditional write is safe only because ALL of a run's status
+        # writes happen in this one task today (same invariant the event
+        # bus documents for its publish locks). Revisit at the M4 split.
         await db.execute(update(Run).where(Run.id == run_id).values(status=status))
         await db.commit()
     await bus.publish(str(run_id), {"type": "run.status", "status": status})
