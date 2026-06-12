@@ -77,7 +77,23 @@ class ToolCallItem(BaseModel):
     created_at: datetime
 
 
-TranscriptItem = Annotated[MessageItem | ToolCallItem, Field(discriminator="kind")]
+class ApprovalItem(BaseModel):
+    """A tool-approval request reconstructed from run_events on reload.
+    decision is None while undecided — on a pending_approval run the UI
+    renders live approve/deny buttons from exactly this state."""
+
+    kind: Literal["approval"] = "approval"
+    run_id: UUID
+    approval_id: str
+    tool: str
+    arguments: dict[str, object]
+    decision: str | None = None
+    created_at: datetime
+
+
+TranscriptItem = Annotated[
+    MessageItem | ToolCallItem | ApprovalItem, Field(discriminator="kind")
+]
 
 
 class ConversationDetail(ConversationSummary):
@@ -148,6 +164,44 @@ async def _tool_items(db: AsyncSession, conversation_id: UUID) -> list[ToolCallI
                 }
             )
     return list(by_call_id.values())
+
+
+async def _approval_items(
+    db: AsyncSession, conversation_id: UUID
+) -> list[ApprovalItem]:
+    """Reconstruct ApprovalItem entries from run_events, mirroring
+    _tool_items: approval_required seeds, approval_decision (same run_id +
+    approval_id) fills in the decision."""
+    rows = (
+        await db.execute(
+            select(RunEvent.run_id, RunEvent.payload, RunEvent.created_at)
+            .join(Run, Run.id == RunEvent.run_id)
+            .where(
+                Run.conversation_id == conversation_id,
+                RunEvent.payload["type"].astext.in_(
+                    ["tool.approval_required", "tool.approval_decision"]
+                ),
+            )
+            .order_by(RunEvent.run_id, RunEvent.sequence)
+        )
+    ).all()
+    by_approval_id: dict[tuple[UUID, str], ApprovalItem] = {}
+    for run_id, payload, created_at in rows:
+        approval_id = str(payload.get("approval_id", ""))
+        key = (run_id, approval_id)
+        if payload["type"] == "tool.approval_required":
+            by_approval_id[key] = ApprovalItem(
+                run_id=run_id,
+                approval_id=approval_id,
+                tool=str(payload.get("tool", "")),
+                arguments=payload.get("arguments") or {},
+                created_at=created_at,
+            )
+        elif key in by_approval_id:
+            by_approval_id[key] = by_approval_id[key].model_copy(
+                update={"decision": str(payload.get("decision", ""))}
+            )
+    return list(by_approval_id.values())
 
 
 @router.post("", status_code=201, response_model=ConversationOut)
@@ -230,7 +284,7 @@ async def get_conversation(
             select(Run.id)
             .where(
                 Run.conversation_id == conv.id,
-                Run.status.in_(["queued", "running"]),
+                Run.status.in_(["queued", "running", "pending_approval"]),
             )
             .order_by(Run.created_at.desc())
             .limit(1)
@@ -253,9 +307,12 @@ async def get_conversation(
         for m, run_status, run_error in rows
     ]
     tool_items: list[TranscriptItem] = list(await _tool_items(db, conv.id))
+    approval_items: list[TranscriptItem] = list(await _approval_items(db, conv.id))
     # sorted() is stable; tool.call always commits before the run's assistant
     # message is inserted, so wall-clock timestamps order the transcript correctly.
-    items = sorted(message_items + tool_items, key=lambda i: i.created_at)
+    items = sorted(
+        message_items + tool_items + approval_items, key=lambda i: i.created_at
+    )
     return ConversationDetail(
         id=conv.id,
         title=conv.title,

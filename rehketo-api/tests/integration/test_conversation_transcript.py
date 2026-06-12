@@ -202,6 +202,112 @@ async def test_two_runs_same_call_id_no_collision(settings_env, db_url, db) -> N
     assert run_ids_in_order == [str(run1.id), str(run2.id)]
 
 
+async def test_transcript_includes_approval_items(settings_env, db_url, db) -> None:
+    u = User(id=uuid4(), display_name="Al", email=f"{uuid4()}@example.com")
+    db.add(u)
+    await db.commit()
+    db.add(UserRole(user_id=u.id, role="User"))
+    conv = Conversation(id=uuid4(), user_id=u.id)
+    db.add(conv)
+    await db.commit()
+    run = Run(
+        id=uuid4(),
+        conversation_id=conv.id,
+        user_id=u.id,
+        status="succeeded",
+        model="claude-sonnet-4-6",
+    )
+    db.add(run)
+    await db.commit()
+
+    bus = PostgresEventBus()
+    await bus.publish(
+        str(run.id),
+        {
+            "type": "tool.approval_required",
+            "approval_id": "ap-1",
+            "tool": "testsrv__echo",
+            "arguments": {"text": "hi"},
+        },
+    )
+    await bus.publish(
+        str(run.id),
+        {
+            "type": "tool.approval_decision",
+            "approval_id": "ap-1",
+            "decision": "deny",
+        },
+    )
+
+    sid = await create_session(
+        db,
+        user_id=u.id,
+        identity_provider="entra",
+        refresh_token="rt",
+        ttl_minutes=60,
+    )
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get(f"/conversations/{conv.id}", cookies={SESSION_COOKIE: str(sid)})
+    assert r.status_code == 200
+    items = r.json()["items"]
+    approval_items = [i for i in items if i["kind"] == "approval"]
+    assert len(approval_items) == 1
+    item = approval_items[0]
+    assert item["approval_id"] == "ap-1"
+    assert item["tool"] == "testsrv__echo"
+    assert item["arguments"] == {"text": "hi"}
+    assert item["decision"] == "deny"
+
+
+async def test_transcript_pending_approval_has_null_decision(
+    settings_env, db_url, db
+) -> None:
+    u = User(id=uuid4(), display_name="Al", email=f"{uuid4()}@example.com")
+    db.add(u)
+    await db.commit()
+    db.add(UserRole(user_id=u.id, role="User"))
+    conv = Conversation(id=uuid4(), user_id=u.id)
+    db.add(conv)
+    await db.commit()
+    run = Run(
+        id=uuid4(),
+        conversation_id=conv.id,
+        user_id=u.id,
+        status="pending_approval",
+        model="claude-sonnet-4-6",
+    )
+    db.add(run)
+    await db.commit()
+
+    bus = PostgresEventBus()
+    await bus.publish(
+        str(run.id),
+        {
+            "type": "tool.approval_required",
+            "approval_id": "ap-1",
+            "tool": "testsrv__echo",
+            "arguments": {"text": "hi"},
+        },
+    )
+
+    sid = await create_session(
+        db,
+        user_id=u.id,
+        identity_provider="entra",
+        refresh_token="rt",
+        ttl_minutes=60,
+    )
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get(f"/conversations/{conv.id}", cookies={SESSION_COOKIE: str(sid)})
+    assert r.status_code == 200
+    items = r.json()["items"]
+    approval_items = [i for i in items if i["kind"] == "approval"]
+    assert len(approval_items) == 1
+    assert approval_items[0]["decision"] is None
+
+
 async def test_call_without_result_is_pending(settings_env, db_url, db) -> None:
     u = User(id=uuid4(), display_name="Al", email=f"{uuid4()}@example.com")
     db.add(u)
