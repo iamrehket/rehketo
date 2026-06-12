@@ -26,6 +26,7 @@ def test_contains_expected_actions():
         "chat.write",
         "chat.cancel_run",
         "chat.upload_files",
+        "chat.approve_tool_call",
         "admin.manage_users",
         "admin.view_audit",
     }

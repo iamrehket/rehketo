@@ -14,6 +14,7 @@ ACTIONS: tuple[str, ...] = (
     "chat.cancel_run",
     "chat.upload_files",
     "chat.use_mcp_server",
+    "chat.approve_tool_call",
     # Admin domain
     "admin.manage_users",
     "admin.view_audit",
