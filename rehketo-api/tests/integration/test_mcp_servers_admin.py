@@ -216,3 +216,24 @@ async def test_unknown_role_in_patch_is_422(settings_env, db_url, db) -> None:
             **_auth(sid, csrf),
         )
     assert r.status_code == 422
+
+
+async def test_auto_approve_default_and_patch(settings_env, db_url, db) -> None:
+    sid, csrf = await _seed_session(db)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post("/admin/mcp-servers", json=_CREATE_BODY, **_auth(sid, csrf))
+        assert r.status_code == 201
+        assert r.json()["auto_approve"] is False
+        server_id = r.json()["id"]
+
+        r = await c.patch(
+            f"/admin/mcp-servers/{server_id}",
+            json={"auto_approve": True},
+            **_auth(sid, csrf),
+        )
+        assert r.status_code == 200
+        assert r.json()["auto_approve"] is True
+
+        r = await c.get("/admin/mcp-servers", cookies={SESSION_COOKIE: sid})
+        assert r.json()["items"][0]["auto_approve"] is True

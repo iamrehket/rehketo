@@ -42,6 +42,7 @@ class McpServerCreate(BaseModel):
     auth_token: str | None = Field(default=None, min_length=1)
     allowed_roles: list[str]
     enabled: bool = True
+    auto_approve: bool = False
 
     @field_validator("allowed_roles")
     @classmethod
@@ -57,6 +58,7 @@ class McpServerPatch(BaseModel):
     auth_token: str | None = Field(default=None, min_length=1)
     allowed_roles: list[str] | None = None
     enabled: bool | None = None
+    auto_approve: bool | None = None
 
     @field_validator("allowed_roles")
     @classmethod
@@ -73,6 +75,7 @@ class McpServerOut(BaseModel):
     has_auth_token: bool
     allowed_roles: list[str]
     enabled: bool
+    auto_approve: bool
     created_at: datetime
     updated_at: datetime
 
@@ -89,6 +92,7 @@ def _to_out(s: McpServer) -> McpServerOut:
         has_auth_token=s.auth_token_ct is not None,
         allowed_roles=s.allowed_roles,
         enabled=s.enabled,
+        auto_approve=s.auto_approve,
         created_at=s.created_at,
         updated_at=s.updated_at,
     )
@@ -140,6 +144,7 @@ async def create_server(
         ),
         allowed_roles=payload.allowed_roles,
         enabled=payload.enabled,
+        auto_approve=payload.auto_approve,
     )
     db.add(server)
     await db.commit()
@@ -168,6 +173,8 @@ async def patch_server(
         server.allowed_roles = payload.allowed_roles
     if payload.enabled is not None:
         server.enabled = payload.enabled
+    if payload.auto_approve is not None:
+        server.auto_approve = payload.auto_approve
     server.updated_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(server)
