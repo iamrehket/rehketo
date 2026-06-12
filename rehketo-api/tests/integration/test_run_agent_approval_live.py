@@ -35,7 +35,9 @@ class _ScriptedModel(BaseChatModel):
     Used instead of GenericFakeChatModel because that class streams via
     _stream() which splits content on whitespace and does not handle the
     modern tool_calls field; deepagents calls ainvoke() which dispatches
-    to _generate(), which this class implements directly.
+    to _generate(), which this class implements directly. Raises StopIteration
+    on exhaustion; the executor wrapper converts it, surfacing as RuntimeError
+    — extend the responses list if deepagents makes extra model calls.
     """
 
     responses: list[AIMessage]
@@ -144,6 +146,7 @@ async def test_real_graph_pauses_and_resumes_on_approval(
     monkeypatch.setattr(graph_mod, "build_chat_model", lambda: model)
 
     run_id = await _seed(db)
+    # No start(): subscribe() falls back to 0.1s polling — no LISTEN task needed here.
     bus = PostgresEventBus(poll_interval=0.1)
     task = asyncio.create_task(run_mod.run_agent(run_id, bus))
 
