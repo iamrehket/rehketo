@@ -84,7 +84,8 @@ clock, so the transcript sort never compares two clock sources.
 At finalize (all three terminal branches):
 
 - every segment but the last → assistant `Message` with
-  `{"text": ..., "channel": "thinking"}`, `created_at` = its `closed_at`;
+  `{"text": ..., "channel": "thinking"}`, `created_at` = its last delta
+  event's DB timestamp;
 - the last segment → answer with plain `{"text": ...}`, `created_at` = now;
 - empty runs persist the single empty answer row, as today.
 
