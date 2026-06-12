@@ -27,6 +27,10 @@
 	let title = $state(conversation.title);
 
 	let streamingText = $state<string | null>(null);
+	let streamingMessageId = $state<string | null>(null);
+	// Monotonic suffix for local thinking ids — replaced by persisted rows
+	// when message.complete arrives.
+	let localThinkingSeq = 0;
 	let streamingStatus = $state<RunStatus | null>(null);
 	let streamingError = $state<ErrorEnvelope | null>(null);
 	let activeRunId = $state<string | null>(null);
@@ -36,9 +40,32 @@
 
 	function resetStreaming(): void {
 		streamingText = null;
+		streamingMessageId = null;
 		streamingStatus = null;
 		streamingError = null;
 		activeRunId = null;
+	}
+
+	// The current streaming segment is proven to be narration (not the
+	// answer) the moment the model calls a tool, asks for approval, or
+	// starts a new message. Fold it into a local thinking item so it
+	// renders inside the working block, above the activity it led to.
+	function foldStreamingTail(): void {
+		const text = streamingText;
+		streamingMessageId = null;
+		if (text === null || text.length === 0 || activeRunId === null) return;
+		const folded: MessageOut = {
+			id: `local-thinking-${activeRunId}-${localThinkingSeq++}`,
+			conversation_id: conversation.id,
+			role: 'assistant',
+			content: { text, channel: 'thinking' },
+			run_id: activeRunId,
+			created_at: new Date(Date.now()).toISOString(),
+			run_status: null,
+			run_error: null
+		};
+		items = [...items, { ...folded, kind: 'message' as const }];
+		streamingText = '';
 	}
 
 	function attachRun(runId: string): void {
@@ -50,16 +77,30 @@
 		streamDisconnected = false;
 
 		subscription = subscribeRun(runId, {
-			onDelta: (delta) => {
+			onDelta: (delta, event) => {
+				if (streamingMessageId !== null && streamingMessageId !== event.message_id) {
+					foldStreamingTail();
+				}
+				streamingMessageId = event.message_id;
 				streamingText = (streamingText ?? '') + delta;
 			},
 			onMessageComplete: (message) => {
+				// Persisted rows replace the local thinking items synthesized
+				// during streaming — same text, server-authoritative ids.
+				items = items.filter(
+					(i) => !(i.kind === 'message' && i.id.startsWith(`local-thinking-${message.run_id}`))
+				);
 				// Replay can deliver a message.complete the conversation GET
 				// already included — dedupe by id rather than trust ordering.
 				if (!items.some((i) => i.kind === 'message' && i.id === message.id)) {
 					items = [...items, { ...message, kind: 'message' as const }];
 				}
-				streamingText = null;
+				// Thinking rows arrive first; only the answer's complete (no
+				// channel marker) ends the streaming bubble.
+				if (message.content.channel !== 'thinking') {
+					streamingText = null;
+					streamingMessageId = null;
+				}
 			},
 			onStatus: (status, error) => {
 				streamingStatus = status;
@@ -72,6 +113,7 @@
 				}
 			},
 			onToolCall: (event) => {
+				foldStreamingTail();
 				// Replay can re-deliver a call already present from the GET.
 				if (
 					!items.some(
@@ -101,6 +143,7 @@
 				);
 			},
 			onApprovalRequired: (event) => {
+				foldStreamingTail();
 				if (
 					!items.some(
 						(i) =>

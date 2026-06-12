@@ -153,3 +153,132 @@ describe('ChatView handler routing', () => {
 		document.body.innerHTML = '';
 	});
 });
+
+describe('ChatView segment folding', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	function handlersFor(runId: string): RunStreamHandlers {
+		mount(ChatView, {
+			target: document.body,
+			props: { conversation: conversation(runId) }
+		});
+		return vi.mocked(subscribeRun).mock.calls[0][1] as RunStreamHandlers;
+	}
+
+	it('folds the current segment into a thinking item when a tool.call arrives', () => {
+		const runId = 'a0000000-0000-0000-0000-00000000000c';
+		const handlers = handlersFor(runId);
+
+		flushSync(() => {
+			handlers.onDelta?.('let me check', {
+				type: 'message.delta',
+				delta: 'let me check',
+				message_id: 'turn-1',
+				sequence: 1,
+				run_id: runId
+			});
+		});
+		flushSync(() => {
+			handlers.onToolCall?.({
+				type: 'tool.call',
+				run_id: runId,
+				call_id: 'call_0',
+				tool: 'testsrv__echo',
+				arguments: {},
+				sequence: 2
+			});
+		});
+
+		// The narration moved INTO the working block, above the tool chip.
+		const block = document.querySelector('[data-working]');
+		expect(block?.textContent).toContain('let me check');
+		expect(block?.querySelector('[data-status="running"]')).not.toBeNull();
+		document.body.innerHTML = '';
+	});
+
+	it('a new message_id after the tool result streams as the answer tail', () => {
+		const runId = 'a0000000-0000-0000-0000-00000000000d';
+		const handlers = handlersFor(runId);
+
+		flushSync(() => {
+			handlers.onDelta?.('narration', {
+				type: 'message.delta',
+				delta: 'narration',
+				message_id: 'turn-1',
+				sequence: 1,
+				run_id: runId
+			});
+		});
+		flushSync(() => {
+			handlers.onDelta?.('It is sunny.', {
+				type: 'message.delta',
+				delta: 'It is sunny.',
+				message_id: 'turn-2',
+				sequence: 2,
+				run_id: runId
+			});
+		});
+
+		const block = document.querySelector('[data-working]');
+		expect(block?.textContent).toContain('narration');
+		expect(block?.textContent).not.toContain('It is sunny.');
+		expect(document.body.textContent).toContain('It is sunny.');
+		document.body.innerHTML = '';
+	});
+
+	it('replaces local thinking items with persisted rows on message.complete', () => {
+		const runId = 'a0000000-0000-0000-0000-00000000000e';
+		const handlers = handlersFor(runId);
+
+		flushSync(() => {
+			handlers.onDelta?.('narration', {
+				type: 'message.delta',
+				delta: 'narration',
+				message_id: 'turn-1',
+				sequence: 1,
+				run_id: runId
+			});
+		});
+		flushSync(() => {
+			handlers.onDelta?.('answer', {
+				type: 'message.delta',
+				delta: 'answer',
+				message_id: 'turn-2',
+				sequence: 2,
+				run_id: runId
+			});
+		});
+		flushSync(() => {
+			handlers.onMessageComplete?.({
+				id: 'persisted-think-1',
+				conversation_id: 'c0000000-0000-0000-0000-000000000001',
+				role: 'assistant',
+				content: { text: 'narration', channel: 'thinking' },
+				run_id: runId,
+				created_at: '2026-06-12T00:00:00Z',
+				run_status: 'succeeded',
+				run_error: null
+			});
+		});
+		flushSync(() => {
+			handlers.onMessageComplete?.({
+				id: 'persisted-ans-1',
+				conversation_id: 'c0000000-0000-0000-0000-000000000001',
+				role: 'assistant',
+				content: { text: 'answer' },
+				run_id: runId,
+				created_at: '2026-06-12T00:00:01Z',
+				run_status: 'succeeded',
+				run_error: null
+			});
+		});
+
+		// Exactly one copy of the narration (persisted row, not the local fold).
+		const matches = document.body.textContent?.split('narration').length;
+		expect(matches).toBe(2); // one occurrence → split yields 2 parts
+		expect(document.body.textContent).toContain('answer');
+		document.body.innerHTML = '';
+	});
+});
