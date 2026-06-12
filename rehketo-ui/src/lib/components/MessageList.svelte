@@ -1,23 +1,31 @@
 <script lang="ts">
 	import AssistantBubble from './AssistantBubble.svelte';
 	import MessageBubble from './MessageBubble.svelte';
-	import type { MessageOut, RunStatus } from '$lib/types';
+	import WorkingBlock from './WorkingBlock.svelte';
+	import { groupTranscript } from '$lib/transcript';
+	import type { ApprovalItem, RunStatus, TranscriptItem } from '$lib/types';
 
 	let {
-		messages,
+		items,
+		liveRunId = null,
 		streamingText = null,
-		streamingStatus = null
+		streamingStatus = null,
+		canDecide = false,
+		onDecide
 	}: {
-		messages: MessageOut[];
+		items: TranscriptItem[];
+		liveRunId?: string | null;
 		streamingText?: string | null;
 		streamingStatus?: RunStatus | null;
+		canDecide?: boolean;
+		onDecide?: (item: ApprovalItem, decision: 'approve' | 'deny') => void;
 	} = $props();
 
 	let container: HTMLDivElement | undefined = $state();
 
 	$effect(() => {
 		// Snap to bottom whenever the list grows or streaming text updates.
-		void messages.length;
+		void items.length;
 		void streamingText;
 		void streamingStatus;
 		if (container) container.scrollTop = container.scrollHeight;
@@ -30,18 +38,35 @@
 	let isActivelyStreaming = $derived(
 		streamingStatus === null || streamingStatus === 'queued' || streamingStatus === 'running'
 	);
+
+	let groups = $derived(groupTranscript(items));
 </script>
 
 <div bind:this={container} class="flex-1 overflow-y-auto px-6 py-4">
 	<ul class="mx-auto flex max-w-3xl flex-col gap-4">
-		{#each messages as message (message.id)}
+		<!-- The index is intentional: runId alone collides when the same run
+		     produces non-adjacent working groups (e.g. tool → answer → tool).
+		     See the edge-case in transcript.spec.ts. -->
+		{#each groups as group, i (group.kind === 'bubble' ? group.item.id : `working:${group.runId}:${i}`)}
 			<li>
-				<MessageBubble {message} />
+				{#if group.kind === 'bubble'}
+					<MessageBubble message={group.item} />
+				{:else}
+					<WorkingBlock
+						entries={group.entries}
+						live={group.runId === liveRunId}
+						canDecide={canDecide && group.runId === liveRunId}
+						{onDecide}
+					/>
+				{/if}
 			</li>
 		{/each}
 		{#if showStreamingBubble}
 			<li>
 				<AssistantBubble text={streamingText ?? ''} streaming={isActivelyStreaming} />
+				{#if streamingStatus === 'pending_approval'}
+					<p class="mt-1 text-xs text-muted">Waiting for tool approval…</p>
+				{/if}
 			</li>
 		{/if}
 	</ul>

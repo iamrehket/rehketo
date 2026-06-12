@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from langchain_core.messages import AIMessage
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -28,14 +30,19 @@ def _stringify_content(content: object) -> str:
 
 def transform_chunk(chunk: tuple[Any, dict[str, Any]]) -> Iterator[dict[str, Any]]:
     """Convert a LangGraph `stream_mode='messages'` chunk into zero or more
-    events in our stable schema. Yields nothing for empty / metadata-only chunks."""
+    events in our stable schema. Yields nothing for empty / metadata-only
+    chunks — and for non-AI messages: `stream_mode='messages'` also yields
+    ToolMessages (raw tool output), which the MCP adapter already publishes
+    as tool.call/tool.result events."""
     msg, _metadata = chunk
-    raw = getattr(msg, "content", None)
+    if not isinstance(msg, AIMessage):
+        return
+    raw = msg.content
     delta = _stringify_content(raw)
     if not delta:
         return
     yield {
         "type": "message.delta",
-        "message_id": getattr(msg, "id", None),
+        "message_id": msg.id,
         "delta": delta,
     }

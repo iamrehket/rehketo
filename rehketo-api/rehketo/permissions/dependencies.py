@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002  # FastAPI needs runtime type for Depends()
@@ -12,40 +11,7 @@ from sqlalchemy.ext.asyncio import (
 from rehketo.auth.dependencies import AuthContext, resolve_session
 from rehketo.db import get_session
 from rehketo.db.models import UserRole
-from rehketo.permissions.check import check_permission
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedPermissions:
-    user_id: UUID
-    roles: frozenset[str]
-
-    def can(
-        self,
-        action: str,
-        *,
-        resource_type: str | None = None,
-        resource_id: UUID | str | None = None,
-    ) -> bool:
-        return check_permission(
-            self.roles,
-            action,
-            resource_type=resource_type,
-            resource_id=resource_id,
-        )
-
-    def require(
-        self,
-        action: str,
-        *,
-        resource_type: str | None = None,
-        resource_id: UUID | str | None = None,
-    ) -> None:
-        if not self.can(action, resource_type=resource_type, resource_id=resource_id):
-            raise HTTPException(status_code=403, detail=f"denied: {action}")
+from rehketo.permissions.resolved import ResolvedPermissions as ResolvedPermissions
 
 
 async def resolve_permissions(

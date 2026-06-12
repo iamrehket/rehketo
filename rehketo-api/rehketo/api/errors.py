@@ -41,6 +41,18 @@ async def _http_exception_handler(
     return envelope(code=code, message=message, status=exc.status_code)
 
 
+def _safe_errors(exc: RequestValidationError) -> list[dict[str, object]]:
+    # pydantic v2 field_validator puts the raw exception in ctx['error'],
+    # which is not JSON-serializable. Stringify it so JSONResponse can encode.
+    out = []
+    for err in exc.errors():
+        ctx = err.get("ctx")
+        if ctx and "error" in ctx and isinstance(ctx["error"], Exception):
+            err = {**err, "ctx": {**ctx, "error": str(ctx["error"])}}
+        out.append(err)
+    return out
+
+
 async def _validation_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
@@ -48,7 +60,7 @@ async def _validation_handler(
         "validation_failed",
         "request validation failed",
         422,
-        extra={"details": exc.errors()},
+        extra={"details": _safe_errors(exc)},
     )
 
 

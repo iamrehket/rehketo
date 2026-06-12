@@ -16,9 +16,13 @@ logger = get_logger(__name__)
 
 
 async def sweep_abandoned_runs(bus: RunEventBus) -> None:
-    """On startup, mark any runs stuck in `running` or `queued` as failed,
-    and publish the terminal event pair so any client still subscribed to a
-    dead run's stream gets a clean close instead of a hang.
+    """On startup, mark any runs stuck in `running`, `queued`, or
+    `pending_approval` as failed, and publish the terminal event pair so any
+    client still subscribed to a dead run's stream gets a clean close instead
+    of a hang.
+
+    A pending approval does not survive a restart — M3.5 scope decision;
+    durable resume is M4.
 
     Deployment constraint: this sweep assumes it owns ALL non-terminal runs —
     with multiple uvicorn workers, one worker restarting would force-fail
@@ -43,7 +47,7 @@ async def sweep_abandoned_runs(bus: RunEventBus) -> None:
     async with sessionmaker()() as db:
         result = await db.execute(
             update(Run)
-            .where(Run.status.in_(["queued", "running"]))
+            .where(Run.status.in_(["queued", "running", "pending_approval"]))
             .values(
                 status="failed",
                 error=error,

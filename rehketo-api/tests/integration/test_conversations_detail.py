@@ -31,7 +31,7 @@ async def test_detail_happy(settings_env, db_url, db) -> None:
     body = r.json()
     assert body["id"] == str(conv.id)
     assert body["title"] == "hi"
-    assert body["messages"] == []
+    assert body["items"] == []
     assert body["active_run_id"] is None
 
 

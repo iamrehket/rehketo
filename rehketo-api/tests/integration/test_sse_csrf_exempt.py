@@ -26,7 +26,7 @@ from rehketo.main import create_app
 from rehketo.runs.registry import reset_registry_for_tests
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator
+    from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 
 
 class _ImmediateAgent:
@@ -38,7 +38,10 @@ class _ImmediateAgent:
 
 
 async def _fake_build_agent(
-    run_id: str, system_prompt: str
+    run_id: str,
+    system_prompt: str,
+    tools: Sequence[Any] = (),
+    interrupt_on: Any = None,
 ) -> AsyncIterator[_ImmediateAgent]:
     yield _ImmediateAgent()
 

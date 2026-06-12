@@ -28,7 +28,7 @@ from rehketo.runs.registry import reset_registry_for_tests
 from tests.integration._helpers import live_app
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator
+    from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 
 try:
     from langchain_core.messages import AIMessageChunk
@@ -50,7 +50,10 @@ class _SlowAgent:
 
 
 async def _fake_build_agent(
-    run_id: str, system_prompt: str
+    run_id: str,
+    system_prompt: str,
+    tools: Sequence[Any] = (),
+    interrupt_on: Any = None,
 ) -> AsyncIterator[_SlowAgent]:
     yield _SlowAgent()
 

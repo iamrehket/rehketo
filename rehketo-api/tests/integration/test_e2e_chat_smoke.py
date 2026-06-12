@@ -19,6 +19,8 @@ from rehketo.runs.registry import reset_registry_for_tests
 from tests.integration._helpers import live_app
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import pytest
 
 
@@ -28,7 +30,12 @@ class _HiAgent:
         yield (AIMessageChunk(content="hi", id="msg-e2e"), {"langgraph_node": "agent"})
 
 
-async def _fake_build_agent(run_id: str, system_prompt: str) -> Any:
+async def _fake_build_agent(
+    run_id: str,
+    system_prompt: str,
+    tools: Sequence[Any] = (),
+    interrupt_on: Any = None,
+) -> Any:
     yield _HiAgent()
 
 
@@ -100,6 +107,7 @@ async def test_full_chat_turn(
             cookies={SESSION_COOKIE: sid},
         )
         assert r.status_code == 200
-        roles = [m["role"] for m in r.json()["messages"]]
+        msgs = [i for i in r.json()["items"] if i["kind"] == "message"]
+        roles = [m["role"] for m in msgs]
         assert "user" in roles
         assert "assistant" in roles

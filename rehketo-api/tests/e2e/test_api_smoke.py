@@ -98,11 +98,12 @@ async def test_full_chat_flow_through_real_http(
         assistant_text = msg_completes[0]["message"]["content"]["text"]
         assert "Hello world!" in assistant_text, f"got {assistant_text!r}"
 
-        # 6. Conversation detail returns messages in time order (user first,
-        # then assistant) — same property the Phase A regression test pins
-        # via ASGITransport, now verified over a real socket.
+        # 6. Conversation detail returns transcript items in time order (user
+        # first, then assistant) — same property the Phase A regression test
+        # pins via ASGITransport, now verified over a real socket. M3 replaced
+        # the flat `messages` field with the `items` discriminated union.
         detail = await c.get(f"/conversations/{conv_id}")
         assert detail.status_code == 200, detail.text
-        msgs = detail.json()["messages"]
-        roles = [m["role"] for m in msgs]
+        items = detail.json()["items"]
+        roles = [i["role"] for i in items if i["kind"] == "message"]
         assert roles == ["user", "assistant"], f"roles={roles}"

@@ -19,6 +19,11 @@ class PermissionError(ValueError):
     pass
 
 
+def known_roles() -> frozenset[str]:
+    """Return the set of valid role names defined in ROLE_PERMISSIONS."""
+    return frozenset(ROLE_PERMISSIONS)
+
+
 def permissions_for_roles(roles: Iterable[str]) -> frozenset[str]:
     result: set[str] = set()
     for r in roles:
@@ -32,12 +37,23 @@ def check_permission(
     *,
     resource_type: str | None,
     resource_id: UUID | str | None,
+    resource_roles: Iterable[str] | None = None,
 ) -> bool:
     """
     Returns True iff the caller is allowed to perform `action` on the
     given resource. `resource_type` and `resource_id` are accepted now;
     v1 RBAC ignores them. Do not remove them from call sites.
+
+    `resource_roles` is the per-resource role allowlist (today: an MCP
+    server's allowed_roles). When provided, the caller must hold the
+    action AND share at least one role with the allowlist. At the OpenFGA
+    cutover this becomes a relationship check; only this body changes.
     """
     if action not in ACTIONS_SET:
         raise PermissionError(f"unknown action: {action!r}")
-    return action in permissions_for_roles(roles)
+    caller_roles = set(roles)
+    if action not in permissions_for_roles(caller_roles):
+        return False
+    if resource_roles is not None:
+        return bool(caller_roles & set(resource_roles))
+    return True

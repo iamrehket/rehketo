@@ -12,7 +12,7 @@ from rehketo.agent.sweep import sweep_abandoned_runs
 from rehketo.db import reset_engine_for_tests
 from rehketo.db.models import Conversation, Run, User
 from rehketo.runs.event_bus import PostgresEventBus
-from tests.integration._helpers import mk_running_run
+from tests.integration._helpers import mk_pending_approval_run, mk_running_run
 
 
 async def test_sweep_marks_running_runs_as_failed(
@@ -61,6 +61,41 @@ async def test_sweep_marks_running_runs_as_failed(
     assert run.status == "failed"
     assert isinstance(run.error, dict)
     assert run.error["code"] == "process_restart"
+
+
+async def test_sweep_fails_pending_approval_runs(
+    settings_env: object, db_url: str
+) -> None:
+    """A pending_approval run must be swept on startup just like running/queued.
+
+    M3.5 scope decision: in-process approval state does not survive a restart;
+    the client must receive the same clean terminal sequence it would for an
+    abandoned running run.
+    """
+    reset_engine_for_tests()
+    run_id = await mk_pending_approval_run()
+
+    bus = PostgresEventBus(poll_interval=0.2)
+    await bus.start()
+    try:
+        await sweep_abandoned_runs(bus)
+
+        events: list[dict] = []
+
+        async def consume() -> None:
+            async with contextlib.aclosing(bus.subscribe(run_id)) as stream:
+                async for e in stream:
+                    events.append(e)
+                    if e["type"] == "run.ended":
+                        return
+
+        await asyncio.wait_for(consume(), timeout=10)
+        statuses = [e for e in events if e["type"] == "run.status"]
+        assert statuses[-1]["status"] == "failed"
+        assert statuses[-1]["error"]["code"] == "process_restart"
+        assert events[-1]["type"] == "run.ended"
+    finally:
+        await bus.stop()
 
 
 async def test_sweep_publishes_closure_events(

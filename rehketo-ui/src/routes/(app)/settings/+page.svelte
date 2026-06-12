@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { apiFetch } from '$lib/api';
+	import { auth } from '$lib/stores/auth.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { ApiError, type PreferencesOut } from '$lib/types';
 	import type { PageData } from './$types';
@@ -73,4 +74,13 @@
 			</button>
 		</div>
 	</section>
+
+	{#if auth.can('admin.manage_mcp_servers')}
+		<section class="mt-8">
+			<h2 class="text-sm font-semibold">Administration</h2>
+			<a href="/settings/mcp-servers" class="mt-2 inline-block text-sm text-accent hover:underline">
+				Manage MCP servers →
+			</a>
+		</section>
+	{/if}
 </div>

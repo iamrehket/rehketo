@@ -21,7 +21,7 @@ from rehketo.runs.registry import reset_registry_for_tests
 from tests.integration._helpers import await_run_terminal, live_app
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator
+    from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 
 
 class _PartialThenHangAgent:
@@ -39,7 +39,10 @@ class _PartialThenHangAgent:
 
 
 async def _fake_build_agent(
-    run_id: str, system_prompt: str
+    run_id: str,
+    system_prompt: str,
+    tools: Sequence[Any] = (),
+    interrupt_on: Any = None,
 ) -> AsyncIterator[_PartialThenHangAgent]:
     yield _PartialThenHangAgent()
 
@@ -54,7 +57,10 @@ class _RaisingAgent:
 
 
 async def _fake_failing_build_agent(
-    run_id: str, system_prompt: str
+    run_id: str,
+    system_prompt: str,
+    tools: Sequence[Any] = (),
+    interrupt_on: Any = None,
 ) -> AsyncIterator[_RaisingAgent]:
     yield _RaisingAgent()
 
@@ -124,7 +130,7 @@ async def test_cancel_persists_partial_assistant_text(
             f"/conversations/{conv.id}", cookies={SESSION_COOKIE: str(sid)}
         )
         assert detail.status_code == 200
-        msgs = detail.json()["messages"]
+        msgs = [i for i in detail.json()["items"] if i["kind"] == "message"]
 
     assistant_msgs = [m for m in msgs if m["role"] == "assistant"]
     assert len(assistant_msgs) == 1
@@ -188,7 +194,7 @@ async def test_fail_persists_partial_with_error(
         detail = await c.get(
             f"/conversations/{conv.id}", cookies={SESSION_COOKIE: str(sid)}
         )
-        msgs = detail.json()["messages"]
+        msgs = [i for i in detail.json()["items"] if i["kind"] == "message"]
 
     assistant_msgs = [m for m in msgs if m["role"] == "assistant"]
     assert len(assistant_msgs) == 1
@@ -218,7 +224,12 @@ async def test_succeeded_run_message_has_succeeded_status(
         async def astream(self, *args: Any, **kwargs: Any) -> AsyncGenerator[Any]:
             yield (AIMessageChunk(content="ok", id="m1"), {"langgraph_node": "agent"})
 
-    async def _build(run_id: str, system_prompt: str) -> AsyncIterator[_HiAgent]:
+    async def _build(
+        run_id: str,
+        system_prompt: str,
+        tools: Sequence[Any] = (),
+        interrupt_on: Any = None,
+    ) -> AsyncIterator[_HiAgent]:
         yield _HiAgent()
 
     monkeypatch.setattr(run_mod, "build_agent", _build)
@@ -262,7 +273,7 @@ async def test_succeeded_run_message_has_succeeded_status(
         detail = await c.get(
             f"/conversations/{conv.id}", cookies={SESSION_COOKIE: str(sid)}
         )
-        msgs = detail.json()["messages"]
+        msgs = [i for i in detail.json()["items"] if i["kind"] == "message"]
 
     assistant = next(m for m in msgs if m["role"] == "assistant")
     assert assistant["run_status"] == "succeeded"
@@ -298,7 +309,7 @@ async def test_user_message_has_no_run_status(
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get(f"/conversations/{conv.id}", cookies={SESSION_COOKIE: str(sid)})
-    user_msg = r.json()["messages"][0]
+    user_msg = next(i for i in r.json()["items"] if i["kind"] == "message")
     assert user_msg["role"] == "user"
     assert user_msg["run_status"] is None
     assert user_msg["run_error"] is None

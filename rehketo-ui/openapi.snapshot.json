@@ -1,6 +1,77 @@
 {
   "components": {
     "schemas": {
+      "ApprovalDecisionIn": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "approve",
+              "deny"
+            ],
+            "title": "Decision",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "ApprovalDecisionIn",
+        "type": "object"
+      },
+      "ApprovalItem": {
+        "description": "A tool-approval request reconstructed from run_events on reload.\ndecision is None while undecided \u2014 on a pending_approval run the UI\nrenders live approve/deny buttons from exactly this state.",
+        "properties": {
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "kind": {
+            "const": "approval",
+            "default": "approval",
+            "title": "Kind",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "approval_id",
+          "tool",
+          "arguments",
+          "created_at"
+        ],
+        "title": "ApprovalItem",
+        "type": "object"
+      },
       "CapabilitiesOut": {
         "properties": {
           "actions": {
@@ -58,11 +129,29 @@
             "title": "Id",
             "type": "string"
           },
-          "messages": {
+          "items": {
             "items": {
-              "$ref": "#/components/schemas/MessageOut"
+              "discriminator": {
+                "mapping": {
+                  "approval": "#/components/schemas/ApprovalItem",
+                  "message": "#/components/schemas/MessageItem",
+                  "tool": "#/components/schemas/ToolCallItem"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/MessageItem"
+                },
+                {
+                  "$ref": "#/components/schemas/ToolCallItem"
+                },
+                {
+                  "$ref": "#/components/schemas/ApprovalItem"
+                }
+              ]
             },
-            "title": "Messages",
+            "title": "Items",
             "type": "array"
           },
           "title": {
@@ -87,7 +176,7 @@
           "title",
           "created_at",
           "updated_at",
-          "messages"
+          "items"
         ],
         "title": "ConversationDetail",
         "type": "object"
@@ -233,6 +322,202 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "McpServerCreate": {
+        "properties": {
+          "allowed_roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Roles",
+            "type": "array"
+          },
+          "auth_token": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Token"
+          },
+          "auto_approve": {
+            "default": false,
+            "title": "Auto Approve",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+([_-][a-z0-9]+)*$",
+            "title": "Name",
+            "type": "string"
+          },
+          "url": {
+            "format": "uri",
+            "maxLength": 2083,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url",
+          "allowed_roles"
+        ],
+        "title": "McpServerCreate",
+        "type": "object"
+      },
+      "McpServerList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/McpServerOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "McpServerList",
+        "type": "object"
+      },
+      "McpServerOut": {
+        "properties": {
+          "allowed_roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Roles",
+            "type": "array"
+          },
+          "auto_approve": {
+            "title": "Auto Approve",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "has_auth_token": {
+            "title": "Has Auth Token",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "url",
+          "has_auth_token",
+          "allowed_roles",
+          "enabled",
+          "auto_approve",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "McpServerOut",
+        "type": "object"
+      },
+      "McpServerPatch": {
+        "properties": {
+          "allowed_roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Roles"
+          },
+          "auth_token": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Token"
+          },
+          "auto_approve": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Approve"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "format": "uri",
+                "maxLength": 2083,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "title": "McpServerPatch",
+        "type": "object"
+      },
       "MeOut": {
         "properties": {
           "display_name": {
@@ -292,27 +577,7 @@
         "title": "MessageCreate",
         "type": "object"
       },
-      "MessageKickoffOut": {
-        "properties": {
-          "message_id": {
-            "format": "uuid",
-            "title": "Message Id",
-            "type": "string"
-          },
-          "run_id": {
-            "format": "uuid",
-            "title": "Run Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "message_id",
-          "run_id"
-        ],
-        "title": "MessageKickoffOut",
-        "type": "object"
-      },
-      "MessageOut": {
+      "MessageItem": {
         "properties": {
           "content": {
             "additionalProperties": true,
@@ -332,6 +597,12 @@
           "id": {
             "format": "uuid",
             "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "message",
+            "default": "message",
+            "title": "Kind",
             "type": "string"
           },
           "role": {
@@ -382,7 +653,27 @@
           "run_id",
           "created_at"
         ],
-        "title": "MessageOut",
+        "title": "MessageItem",
+        "type": "object"
+      },
+      "MessageKickoffOut": {
+        "properties": {
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "run_id"
+        ],
+        "title": "MessageKickoffOut",
         "type": "object"
       },
       "PreferencesIn": {
@@ -440,6 +731,71 @@
           "model"
         ],
         "title": "RunOut",
+        "type": "object"
+      },
+      "ToolCallItem": {
+        "description": "A tool invocation reconstructed from run_events on reload \u2014 the event\nlog is the single source of truth for live streaming, resume, and\ntranscript history. result is None while no tool.result event exists\n(in-flight, or the run died mid-call).",
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "is_error": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Error"
+          },
+          "kind": {
+            "const": "tool",
+            "default": "tool",
+            "title": "Kind",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "call_id",
+          "tool",
+          "arguments",
+          "created_at"
+        ],
+        "title": "ToolCallItem",
         "type": "object"
       },
       "ValidationError": {
@@ -504,6 +860,182 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/admin/mcp-servers": {
+      "get": {
+        "operationId": "list_servers_admin_mcp_servers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List Servers",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "create_server_admin_mcp_servers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          },
+          {
+            "CSRFToken": []
+          }
+        ],
+        "summary": "Create Server",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/mcp-servers/{server_id}": {
+      "delete": {
+        "operationId": "delete_server_admin_mcp_servers__server_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Server Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          },
+          {
+            "CSRFToken": []
+          }
+        ],
+        "summary": "Delete Server",
+        "tags": [
+          "admin"
+        ]
+      },
+      "patch": {
+        "operationId": "patch_server_admin_mcp_servers__server_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Server Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpServerPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServerOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          },
+          {
+            "CSRFToken": []
+          }
+        ],
+        "summary": "Patch Server",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/auth/callback": {
       "get": {
         "operationId": "callback_auth_callback_get",
@@ -1264,6 +1796,70 @@
           }
         ],
         "summary": "Get Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/runs/{run_id}/approvals/{approval_id}": {
+      "post": {
+        "description": "Record the user's decision for one pending tool call. The decision is\npublished as a durable tool.approval_decision event; the waiting run task\nconsumes it from its own bus subscription. First decision wins (409 on a\nrepeat); validation is against run_events, the single source of truth.",
+        "operationId": "decide_approval_runs__run_id__approvals__approval_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          },
+          {
+            "CSRFToken": []
+          }
+        ],
+        "summary": "Decide Approval",
         "tags": [
           "runs"
         ]

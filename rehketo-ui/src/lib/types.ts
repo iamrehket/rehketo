@@ -5,7 +5,13 @@
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
-export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type RunStatus =
+	| 'queued'
+	| 'running'
+	| 'pending_approval'
+	| 'succeeded'
+	| 'failed'
+	| 'cancelled';
 
 export type ErrorEnvelope = {
 	code: string;
@@ -18,7 +24,7 @@ export type User = {
 	email: string | null;
 };
 
-// The 9 canonical actions from rehketo-api/rehketo/permissions/actions.py.
+// The 12 canonical actions from rehketo-api/rehketo/permissions/actions.py.
 // Keep in sync — if the backend adds one, this is the single source of
 // truth on the UI side.
 export type Capability =
@@ -29,8 +35,11 @@ export type Capability =
 	| 'chat.write'
 	| 'chat.cancel_run'
 	| 'chat.upload_files'
+	| 'chat.use_mcp_server'
+	| 'chat.approve_tool_call'
 	| 'admin.manage_users'
-	| 'admin.view_audit';
+	| 'admin.view_audit'
+	| 'admin.manage_mcp_servers';
 
 // The /me response is flat (matches rehketo-api/rehketo/api/me.py). `User` is
 // assembled from these fields in auth.hydrate; the backend is the contract
@@ -64,6 +73,10 @@ export type ConversationList = {
 
 export type MessageContent = {
 	text: string;
+	// Present on intermediate "thinking" turns of a tool-using run; absent
+	// on answers and user messages. Matches the api's per-turn persistence
+	// (rehketo/agent/run.py _assistant_rows).
+	channel?: 'thinking';
 };
 
 export type MessageOut = {
@@ -80,7 +93,7 @@ export type MessageOut = {
 };
 
 export type ConversationDetail = ConversationSummary & {
-	messages: MessageOut[];
+	items: TranscriptItem[];
 	active_run_id: string | null;
 };
 
@@ -119,7 +132,82 @@ export type RunEvent =
 			sequence: number;
 			run_id: string;
 	  }
-	| { type: 'run.ended'; sequence: number; run_id: string };
+	| { type: 'run.ended'; sequence: number; run_id: string }
+	| {
+			type: 'tool.call';
+			call_id: string;
+			tool: string;
+			arguments: Record<string, unknown>;
+			sequence: number;
+			run_id: string;
+	  }
+	| {
+			type: 'tool.result';
+			call_id: string;
+			result: string;
+			is_error: boolean;
+			sequence: number;
+			run_id: string;
+	  }
+	| {
+			type: 'tool.approval_required';
+			approval_id: string;
+			tool: string;
+			arguments: Record<string, unknown>;
+			sequence: number;
+			run_id: string;
+	  }
+	| {
+			type: 'tool.approval_decision';
+			approval_id: string;
+			decision: 'approve' | 'deny';
+			sequence: number;
+			run_id: string;
+	  };
+
+// Transcript items — matches rehketo-api/rehketo/api/conversations.py
+// MessageItem / ToolCallItem discriminated union.
+export type MessageItem = MessageOut & { kind: 'message' };
+
+export type ToolCallItem = {
+	kind: 'tool';
+	run_id: string;
+	call_id: string;
+	tool: string;
+	arguments: Record<string, unknown>;
+	result: string | null;
+	is_error: boolean | null;
+	created_at: string;
+};
+
+export type ApprovalItem = {
+	kind: 'approval';
+	run_id: string;
+	approval_id: string;
+	tool: string;
+	arguments: Record<string, unknown>;
+	decision: 'approve' | 'deny' | null;
+	created_at: string;
+};
+
+export type TranscriptItem = MessageItem | ToolCallItem | ApprovalItem;
+
+// Matches rehketo-api/rehketo/api/mcp_servers.py McpServerOut.
+export type McpServerOut = {
+	id: string;
+	name: string;
+	url: string;
+	has_auth_token: boolean;
+	allowed_roles: string[];
+	enabled: boolean;
+	auto_approve: boolean;
+	created_at: string;
+	updated_at: string;
+};
+
+export type McpServerList = {
+	items: McpServerOut[];
+};
 
 export class ApiError extends Error {
 	readonly code: string;

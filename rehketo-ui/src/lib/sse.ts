@@ -1,10 +1,16 @@
 // Run event stream consumer.
 //
-// Protocol (spec §5.4):
+// Protocol:
 // - success: message.delta* → message.complete → run.status=succeeded
 //            → [conversation.updated] → run.ended
 // - failure: message.delta* → run.status=failed → run.ended
 // - cancel:  message.delta* → run.status=cancelled → run.ended
+//
+// tool.call / tool.result interleave with deltas on any flow — they
+// come from the same agent stream loop, not a separate success path.
+//
+// tool.approval_required pauses the run (run.status=pending_approval)
+// until a tool.approval_decision arrives; the stream stays open throughout.
 //
 // The backend emits SSE frames with an `event:` field set to the event
 // type (e.g. `event: message.delta`). Browsers dispatch those as custom
@@ -43,6 +49,10 @@ export type RunStreamHandlers = {
 	onMessageComplete?: (message: MessageOut) => void;
 	onStatus?: (status: RunStatus, error: { code: string; message: string } | undefined) => void;
 	onConversationUpdated?: (conversationId: string, title: string) => void;
+	onToolCall?: (event: Extract<RunEvent, { type: 'tool.call' }>) => void;
+	onToolResult?: (event: Extract<RunEvent, { type: 'tool.result' }>) => void;
+	onApprovalRequired?: (event: Extract<RunEvent, { type: 'tool.approval_required' }>) => void;
+	onApprovalDecision?: (event: Extract<RunEvent, { type: 'tool.approval_decision' }>) => void;
 	onEnded?: () => void;
 	onError?: (err: unknown) => void;
 };
@@ -172,6 +182,35 @@ export function subscribeRun(
 			handlers.onConversationUpdated?.(event.conversation_id, event.title);
 		});
 
+		self.addEventListener('tool.call', (evt) => {
+			const event = parseOrError<Extract<RunEvent, { type: 'tool.call' }>>(evt);
+			if (!event) return;
+			track(event);
+			if (sub.state === 'idle' || sub.state === 'queued') sub.state = 'running';
+			handlers.onToolCall?.(event);
+		});
+
+		self.addEventListener('tool.result', (evt) => {
+			const event = parseOrError<Extract<RunEvent, { type: 'tool.result' }>>(evt);
+			if (!event) return;
+			track(event);
+			handlers.onToolResult?.(event);
+		});
+
+		self.addEventListener('tool.approval_required', (evt) => {
+			const event = parseOrError<Extract<RunEvent, { type: 'tool.approval_required' }>>(evt);
+			if (!event) return;
+			track(event);
+			handlers.onApprovalRequired?.(event);
+		});
+
+		self.addEventListener('tool.approval_decision', (evt) => {
+			const event = parseOrError<Extract<RunEvent, { type: 'tool.approval_decision' }>>(evt);
+			if (!event) return;
+			track(event);
+			handlers.onApprovalDecision?.(event);
+		});
+
 		self.addEventListener('run.status', (evt) => {
 			const event = parseOrError<Extract<RunEvent, { type: 'run.status' }>>(evt);
 			if (!event) return;
@@ -180,6 +219,9 @@ export function subscribeRun(
 			if (event.status === 'queued') {
 				if (sub.state === 'idle') sub.state = 'queued';
 			} else if (event.status === 'running') {
+				sub.state = 'running';
+			} else if (event.status === 'pending_approval') {
+				// Paused for a user decision — the stream stays live.
 				sub.state = 'running';
 			} else if (event.status === 'succeeded') {
 				sub.state = 'terminalSucceeded';

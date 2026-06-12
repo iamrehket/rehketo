@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002  # FastAPI needs runtime type for Depends()
 )
 
 from rehketo.db import get_session
-from rehketo.db.models import Conversation, Message, Run
+from rehketo.db.models import Conversation, Message, Run, RunEvent
 from rehketo.permissions.dependencies import ResolvedPermissions, resolve_permissions
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -57,13 +57,55 @@ class MessageOut(BaseModel):
     run_error: dict[str, object] | None = None
 
 
+class MessageItem(MessageOut):
+    kind: Literal["message"] = "message"
+
+
+class ToolCallItem(BaseModel):
+    """A tool invocation reconstructed from run_events on reload — the event
+    log is the single source of truth for live streaming, resume, and
+    transcript history. result is None while no tool.result event exists
+    (in-flight, or the run died mid-call)."""
+
+    kind: Literal["tool"] = "tool"
+    run_id: UUID
+    call_id: str
+    tool: str
+    arguments: dict[str, object]
+    result: str | None = None
+    is_error: bool | None = None
+    created_at: datetime
+
+
+class ApprovalItem(BaseModel):
+    """A tool-approval request reconstructed from run_events on reload.
+    decision is None while undecided — on a pending_approval run the UI
+    renders live approve/deny buttons from exactly this state."""
+
+    kind: Literal["approval"] = "approval"
+    run_id: UUID
+    approval_id: str
+    tool: str
+    arguments: dict[str, object]
+    decision: str | None = None
+    created_at: datetime
+
+
+TranscriptItem = Annotated[
+    MessageItem | ToolCallItem | ApprovalItem, Field(discriminator="kind")
+]
+
+
 class ConversationDetail(ConversationSummary):
-    messages: list[MessageOut]
-    # In-flight run for this conversation (queued/running), newest first.
-    # The UI uses this to reattach to the live SSE stream on open.
-    # Best-effort: a run abandoned by a process crash stays queued/running
-    # until the next startup sweep, so this can briefly point at a dead run —
-    # the subscriber then just waits and the sweep's closure events end it.
+    # Chronologically interleaved transcript — messages + tool activity
+    # reconstructed from run_events. Replaces the old `messages` field.
+    items: list[TranscriptItem]
+    # In-flight run for this conversation (queued/running/pending_approval),
+    # newest first. The UI uses this to reattach to the live SSE stream on open.
+    # Best-effort: a run abandoned by a process crash stays
+    # queued/running/pending_approval until the next startup sweep, so this can
+    # briefly point at a dead run — the subscriber then just waits and the
+    # sweep's closure events end it.
     active_run_id: UUID | None = None
 
 
@@ -75,6 +117,93 @@ class ConversationPatch(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+async def _tool_items(db: AsyncSession, conversation_id: UUID) -> list[ToolCallItem]:
+    """Reconstruct ToolCallItem pairs from run_events for a conversation.
+
+    tool.call events seed an entry; the matching tool.result (same run_id +
+    call_id) fills in result/is_error. Keying by (run_id, call_id) prevents
+    collisions when provider-supplied IDs like "call_0" repeat across runs.
+    Unmatched calls are left pending (result=None). Query is extracted here to
+    keep get_conversation under the branch/statement caps.
+
+    Growth note: the query filters every run_event row of the conversation
+    through an unindexed JSONB type check; fine at present scale — when it
+    bites, a partial index on tool event types or delta pruning in the startup
+    sweep is the remedy.
+    """
+    rows = (
+        await db.execute(
+            select(RunEvent.run_id, RunEvent.payload, RunEvent.created_at)
+            .join(Run, Run.id == RunEvent.run_id)
+            .where(
+                Run.conversation_id == conversation_id,
+                RunEvent.payload["type"].astext.in_(["tool.call", "tool.result"]),
+            )
+            .order_by(RunEvent.run_id, RunEvent.sequence)
+        )
+    ).all()
+    by_call_id: dict[tuple[UUID, str], ToolCallItem] = {}
+    for run_id, payload, created_at in rows:
+        call_id = str(payload.get("call_id", ""))
+        key = (run_id, call_id)
+        if payload["type"] == "tool.call":
+            by_call_id[key] = ToolCallItem(
+                run_id=run_id,
+                call_id=call_id,
+                tool=str(payload.get("tool", "")),
+                arguments=payload.get("arguments") or {},
+                created_at=created_at,
+            )
+        elif key in by_call_id:
+            item = by_call_id[key]
+            by_call_id[key] = item.model_copy(
+                update={
+                    "result": str(payload.get("result", "")),
+                    "is_error": bool(payload.get("is_error", False)),
+                }
+            )
+    return list(by_call_id.values())
+
+
+async def _approval_items(
+    db: AsyncSession, conversation_id: UUID
+) -> list[ApprovalItem]:
+    """Reconstruct ApprovalItem entries from run_events, mirroring
+    _tool_items: approval_required seeds, approval_decision (same run_id +
+    approval_id) fills in the decision. Same unindexed-JSONB growth caveat
+    as _tool_items — apply any future remedy to both."""
+    rows = (
+        await db.execute(
+            select(RunEvent.run_id, RunEvent.payload, RunEvent.created_at)
+            .join(Run, Run.id == RunEvent.run_id)
+            .where(
+                Run.conversation_id == conversation_id,
+                RunEvent.payload["type"].astext.in_(
+                    ["tool.approval_required", "tool.approval_decision"]
+                ),
+            )
+            .order_by(RunEvent.run_id, RunEvent.sequence)
+        )
+    ).all()
+    by_approval_id: dict[tuple[UUID, str], ApprovalItem] = {}
+    for run_id, payload, created_at in rows:
+        approval_id = str(payload.get("approval_id", ""))
+        key = (run_id, approval_id)
+        if payload["type"] == "tool.approval_required":
+            by_approval_id[key] = ApprovalItem(
+                run_id=run_id,
+                approval_id=approval_id,
+                tool=str(payload.get("tool", "")),
+                arguments=payload.get("arguments") or {},
+                created_at=created_at,
+            )
+        elif key in by_approval_id:
+            by_approval_id[key] = by_approval_id[key].model_copy(
+                update={"decision": str(payload.get("decision", ""))}
+            )
+    return list(by_approval_id.values())
 
 
 @router.post("", status_code=201, response_model=ConversationOut)
@@ -157,34 +286,46 @@ async def get_conversation(
             select(Run.id)
             .where(
                 Run.conversation_id == conv.id,
-                Run.status.in_(["queued", "running"]),
+                Run.status.in_(["queued", "running", "pending_approval"]),
             )
             .order_by(Run.created_at.desc())
             .limit(1)
         )
     ).scalar_one_or_none()
-    # Treat in-flight runs (queued/running) as "no terminal status yet" on the
-    # wire — the UI only uses run_status to render terminal-state badges.
+    # Treat in-flight runs (queued/running/pending_approval) as "no terminal
+    # status yet" on the wire — the UI only uses run_status to render
+    # terminal-state badges.
     terminal = {"succeeded", "failed", "cancelled"}
+    message_items: list[TranscriptItem] = [
+        MessageItem(
+            id=m.id,
+            conversation_id=m.conversation_id,
+            role=m.role,
+            content=m.content,
+            run_id=m.run_id,
+            created_at=m.created_at,
+            run_status=run_status if run_status in terminal else None,
+            run_error=run_error if run_status in terminal else None,
+        )
+        for m, run_status, run_error in rows
+    ]
+    tool_items: list[TranscriptItem] = list(await _tool_items(db, conv.id))
+    approval_items: list[TranscriptItem] = list(await _approval_items(db, conv.id))
+    # sorted() is stable; all transcript timestamps now use the DB clock —
+    # tool items from run_events, thinking rows copied from their last delta
+    # event, the answer from its insert default. The pre-sort list puts
+    # messages before tool items, so equal timestamps at microsecond resolution
+    # keep narration above its tool chip.
+    items = sorted(
+        message_items + tool_items + approval_items, key=lambda i: i.created_at
+    )
     return ConversationDetail(
         id=conv.id,
         title=conv.title,
         created_at=conv.created_at,
         updated_at=conv.updated_at,
         active_run_id=active_run_id,
-        messages=[
-            MessageOut(
-                id=m.id,
-                conversation_id=m.conversation_id,
-                role=m.role,
-                content=m.content,
-                run_id=m.run_id,
-                created_at=m.created_at,
-                run_status=run_status if run_status in terminal else None,
-                run_error=run_error if run_status in terminal else None,
-            )
-            for m, run_status, run_error in rows
-        ],
+        items=items,
     )
 
 

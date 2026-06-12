@@ -10,21 +10,27 @@
 	import { subscribeRun, type RunStreamSubscription } from '$lib/sse';
 	import {
 		ApiError,
+		type ApprovalItem,
 		type ConversationDetail,
 		type ErrorEnvelope,
 		type MessageKickoffOut,
 		type MessageOut,
-		type RunStatus
+		type RunStatus,
+		type TranscriptItem
 	} from '$lib/types';
 
 	let { conversation }: { conversation: ConversationDetail } = $props();
 
 	// svelte-ignore state_referenced_locally
-	let messages = $state<MessageOut[]>(conversation.messages);
+	let items = $state<TranscriptItem[]>(conversation.items);
 	// svelte-ignore state_referenced_locally
 	let title = $state(conversation.title);
 
 	let streamingText = $state<string | null>(null);
+	let streamingMessageId = $state<string | null>(null);
+	// Monotonic suffix for local thinking ids — replaced by persisted rows
+	// when message.complete arrives.
+	let localThinkingSeq = 0;
 	let streamingStatus = $state<RunStatus | null>(null);
 	let streamingError = $state<ErrorEnvelope | null>(null);
 	let activeRunId = $state<string | null>(null);
@@ -34,9 +40,32 @@
 
 	function resetStreaming(): void {
 		streamingText = null;
+		streamingMessageId = null;
 		streamingStatus = null;
 		streamingError = null;
 		activeRunId = null;
+	}
+
+	// The current streaming segment is proven to be narration (not the
+	// answer) the moment the model calls a tool, asks for approval, or
+	// starts a new message. Fold it into a local thinking item so it
+	// renders inside the working block, above the activity it led to.
+	function foldStreamingTail(): void {
+		const text = streamingText;
+		streamingMessageId = null;
+		if (text === null || text.length === 0 || activeRunId === null) return;
+		const folded: MessageOut = {
+			id: `local-thinking-${activeRunId}-${localThinkingSeq++}`,
+			conversation_id: conversation.id,
+			role: 'assistant',
+			content: { text, channel: 'thinking' },
+			run_id: activeRunId,
+			created_at: new Date(Date.now()).toISOString(),
+			run_status: null,
+			run_error: null
+		};
+		items = [...items, { ...folded, kind: 'message' as const }];
+		streamingText = '';
 	}
 
 	function attachRun(runId: string): void {
@@ -48,16 +77,30 @@
 		streamDisconnected = false;
 
 		subscription = subscribeRun(runId, {
-			onDelta: (delta) => {
+			onDelta: (delta, event) => {
+				if (streamingMessageId !== null && streamingMessageId !== event.message_id) {
+					foldStreamingTail();
+				}
+				streamingMessageId = event.message_id;
 				streamingText = (streamingText ?? '') + delta;
 			},
 			onMessageComplete: (message) => {
+				// Persisted rows replace the local thinking items synthesized
+				// during streaming — same text, server-authoritative ids.
+				items = items.filter(
+					(i) => !(i.kind === 'message' && i.id.startsWith(`local-thinking-${message.run_id}`))
+				);
 				// Replay can deliver a message.complete the conversation GET
 				// already included — dedupe by id rather than trust ordering.
-				if (!messages.some((m) => m.id === message.id)) {
-					messages = [...messages, message];
+				if (!items.some((i) => i.kind === 'message' && i.id === message.id)) {
+					items = [...items, { ...message, kind: 'message' as const }];
 				}
-				streamingText = null;
+				// Thinking rows arrive first; only the answer's complete (no
+				// channel marker) ends the streaming bubble.
+				if (message.content.channel !== 'thinking') {
+					streamingText = null;
+					streamingMessageId = null;
+				}
 			},
 			onStatus: (status, error) => {
 				streamingStatus = status;
@@ -69,25 +112,86 @@
 					conversations.patchTitle(conversationId, newTitle);
 				}
 			},
+			onToolCall: (event) => {
+				foldStreamingTail();
+				// Replay can re-deliver a call already present from the GET.
+				if (
+					!items.some(
+						(i) => i.kind === 'tool' && i.run_id === event.run_id && i.call_id === event.call_id
+					)
+				) {
+					items = [
+						...items,
+						{
+							kind: 'tool',
+							run_id: event.run_id,
+							call_id: event.call_id,
+							tool: event.tool,
+							arguments: event.arguments,
+							result: null,
+							is_error: null,
+							created_at: new Date(Date.now()).toISOString()
+						}
+					];
+				}
+			},
+			onToolResult: (event) => {
+				items = items.map((i) =>
+					i.kind === 'tool' && i.run_id === event.run_id && i.call_id === event.call_id
+						? { ...i, result: event.result, is_error: event.is_error }
+						: i
+				);
+			},
+			onApprovalRequired: (event) => {
+				foldStreamingTail();
+				if (
+					!items.some(
+						(i) =>
+							i.kind === 'approval' &&
+							i.run_id === event.run_id &&
+							i.approval_id === event.approval_id
+					)
+				) {
+					items = [
+						...items,
+						{
+							kind: 'approval',
+							run_id: event.run_id,
+							approval_id: event.approval_id,
+							tool: event.tool,
+							arguments: event.arguments,
+							decision: null,
+							created_at: new Date(Date.now()).toISOString()
+						}
+					];
+				}
+			},
+			onApprovalDecision: (event) => {
+				// Resolve on the EVENT, not the POST response — a second tab
+				// (or another device) resolves the same card this way.
+				items = items.map((i) =>
+					i.kind === 'approval' && i.approval_id === event.approval_id
+						? { ...i, decision: event.decision }
+						: i
+				);
+			},
 			onEnded: () => {
 				if (streamingStatus === 'failed' || streamingStatus === 'cancelled') {
 					// Persist the partial bubble as a "terminal" assistant message
 					// locally so reload semantics match live. The backend has also
 					// persisted it with run_status set.
 					if (streamingText !== null) {
-						messages = [
-							...messages,
-							{
-								id: `local-${activeRunId ?? ''}-terminal`,
-								conversation_id: conversation.id,
-								role: 'assistant',
-								content: { text: streamingText },
-								run_id: activeRunId,
-								created_at: new Date(Date.now()).toISOString(),
-								run_status: streamingStatus,
-								run_error: streamingError
-							}
-						];
+						const terminalMessage: MessageOut = {
+							id: `local-${activeRunId ?? ''}-terminal`,
+							conversation_id: conversation.id,
+							role: 'assistant',
+							content: { text: streamingText },
+							run_id: activeRunId,
+							created_at: new Date(Date.now()).toISOString(),
+							run_status: streamingStatus,
+							run_error: streamingError
+						};
+						items = [...items, { ...terminalMessage, kind: 'message' as const }];
 					}
 				}
 				resetStreaming();
@@ -112,19 +216,17 @@
 		// POST resolves — matching ids keep reload semantics correct).
 		const tempId = `local-${Date.now()}`;
 		const now = new Date(Date.now()).toISOString();
-		messages = [
-			...messages,
-			{
-				id: tempId,
-				conversation_id: conversation.id,
-				role: 'user',
-				content: { text },
-				run_id: null,
-				created_at: now,
-				run_status: null,
-				run_error: null
-			}
-		];
+		const optimisticMessage: MessageOut = {
+			id: tempId,
+			conversation_id: conversation.id,
+			role: 'user',
+			content: { text },
+			run_id: null,
+			created_at: now,
+			run_status: null,
+			run_error: null
+		};
+		items = [...items, { ...optimisticMessage, kind: 'message' as const }];
 
 		try {
 			const kickoff = await apiFetch<MessageKickoffOut>(
@@ -135,14 +237,16 @@
 				}
 			);
 			// Reconcile the optimistic bubble with the server-assigned id.
-			messages = messages.map((m) =>
-				m.id === tempId ? { ...m, id: kickoff.message_id, run_id: kickoff.run_id } : m
+			items = items.map((i) =>
+				i.kind === 'message' && i.id === tempId
+					? { ...i, id: kickoff.message_id, run_id: kickoff.run_id }
+					: i
 			);
 			conversations.bumpUpdatedAt(conversation.id);
 			attachRun(kickoff.run_id);
 		} catch (err) {
 			// Roll back the optimistic bubble on failure.
-			messages = messages.filter((m) => m.id !== tempId);
+			items = items.filter((i) => !(i.kind === 'message' && i.id === tempId));
 			if (err instanceof ApiError) console.warn('send failed:', err.code, err.message);
 		}
 	}
@@ -163,6 +267,20 @@
 		}
 	}
 
+	async function decideApproval(item: ApprovalItem, decision: 'approve' | 'deny'): Promise<void> {
+		try {
+			await apiFetch(`/runs/${item.run_id}/approvals/${item.approval_id}`, {
+				method: 'POST',
+				body: JSON.stringify({ decision })
+			});
+		} catch (err) {
+			// 409 = already decided (other tab) or run no longer pending; the
+			// decision event (or terminal status) updates the card — swallow.
+			if (err instanceof ApiError && err.status === 409) return;
+			if (err instanceof ApiError) console.warn('approval failed:', err.code, err.message);
+		}
+	}
+
 	onDestroy(() => {
 		subscription?.unsubscribe();
 		subscription = null;
@@ -178,7 +296,14 @@
 		</div>
 	{/if}
 
-	<MessageList {messages} {streamingText} {streamingStatus} />
+	<MessageList
+		{items}
+		liveRunId={activeRunId}
+		{streamingText}
+		{streamingStatus}
+		canDecide={auth.can('chat.approve_tool_call')}
+		onDecide={decideApproval}
+	/>
 
 	{#if isStreaming && auth.can('chat.cancel_run')}
 		<div class="flex justify-center border-t border-border bg-bg/80 px-6 py-2">

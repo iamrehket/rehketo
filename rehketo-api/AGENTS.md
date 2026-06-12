@@ -32,6 +32,9 @@ uv run mypy rehketo
 uv run bandit -r rehketo
 uv run lint-imports          # import-linter layer contract (.importlinter)
 uv run pytest
+uv run pytest -m e2e         # offline browser suite (fake Bifrost + Playwright); needs
+                             # postgres up. Deselected by default, so it does NOT run
+                             # with plain pytest — wire-shape changes must run it.
 uv run python ../tools/check_contract.py   # OpenAPI snapshot vs. UI baseline
 ```
 

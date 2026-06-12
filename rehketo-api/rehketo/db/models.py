@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     ARRAY,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -13,6 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -130,6 +132,28 @@ class UserPreferences(Base):
     )
 
 
+class McpServer(Base):
+    __tablename__ = "mcp_servers"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    auth_token_ct: Mapped[bytes | None] = mapped_column(LargeBinary)
+    allowed_roles: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    auto_approve: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -178,7 +202,8 @@ class Run(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status in ('queued','running','succeeded','failed','cancelled')",
+            "status in ('queued','running','pending_approval',"
+            "'succeeded','failed','cancelled')",
             name="runs_status_enum",
         ),
     )

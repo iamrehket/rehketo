@@ -42,6 +42,13 @@ class PostgresEventBus:
         self._poll_interval = poll_interval
         self._wakes: dict[str, set[asyncio.Event]] = defaultdict(set)
         self._listener: asyncio.Task[None] | None = None
+        # publish() computes MAX(sequence)+1 per run; concurrent publishers
+        # for the same run (parallel tool calls + the delta stream loop) race
+        # that read. All of a run's publishers live in this process — true
+        # today and after the M4 worker split — so a process-local per-run
+        # lock is sufficient. Popped when run.ended is published, success or
+        # failure.
+        self._publish_locks: dict[str, asyncio.Lock] = {}
 
     async def start(self) -> None:
         ready = asyncio.Event()
@@ -65,26 +72,32 @@ class PostgresEventBus:
             wake.set()
 
     async def publish(self, run_id: str, event: dict[str, object]) -> None:
-        async with sessionmaker()() as db:
-            # Sequence assigned in the INSERT: safe because each run has
-            # exactly one publisher (its run_agent task); the (run_id,
-            # sequence) unique constraint makes any violation loud.
-            await db.execute(
-                text(
-                    "INSERT INTO run_events (run_id, sequence, payload) "
-                    "SELECT :rid, COALESCE(MAX(sequence) + 1, 0), "
-                    "CAST(:payload AS jsonb) "
-                    "FROM run_events WHERE run_id = :rid"
-                ),
-                {"rid": run_id, "payload": json.dumps(event, default=str)},
-            )
-            # Same transaction as the INSERT — postgres delivers NOTIFY on
-            # commit, so a wake can never precede its row.
-            await db.execute(
-                text("SELECT pg_notify(:chan, :rid)"),
-                {"chan": EVENTS_CHANNEL, "rid": run_id},
-            )
-            await db.commit()
+        lock = self._publish_locks.setdefault(run_id, asyncio.Lock())
+        try:
+            async with lock, sessionmaker()() as db:
+                # Sequence assigned in the INSERT; the per-run lock above
+                # serializes concurrent publishers (parallel tool calls), and
+                # the (run_id, sequence) unique constraint makes any violation
+                # loud.
+                await db.execute(
+                    text(
+                        "INSERT INTO run_events (run_id, sequence, payload) "
+                        "SELECT :rid, COALESCE(MAX(sequence) + 1, 0), "
+                        "CAST(:payload AS jsonb) "
+                        "FROM run_events WHERE run_id = :rid"
+                    ),
+                    {"rid": run_id, "payload": json.dumps(event, default=str)},
+                )
+                # Same transaction as the INSERT — postgres delivers NOTIFY on
+                # commit, so a wake can never precede its row.
+                await db.execute(
+                    text("SELECT pg_notify(:chan, :rid)"),
+                    {"chan": EVENTS_CHANNEL, "rid": run_id},
+                )
+                await db.commit()
+        finally:
+            if event.get("type") == "run.ended":
+                self._publish_locks.pop(run_id, None)
 
     async def subscribe(
         self,

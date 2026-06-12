@@ -25,7 +25,7 @@ from rehketo.runs.registry import reset_registry_for_tests
 from tests.integration._helpers import live_app
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator
+    from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 
     import pytest
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +39,12 @@ class _OkAgent:
         yield (AIMessageChunk(content="ok", id="m1"), {"langgraph_node": "agent"})
 
 
-async def _fake_build_agent(run_id: str, system_prompt: str) -> AsyncIterator[_OkAgent]:
+async def _fake_build_agent(
+    run_id: str,
+    system_prompt: str,
+    tools: Sequence[Any] = (),
+    interrupt_on: Any = None,
+) -> AsyncIterator[_OkAgent]:
     captured["system_prompt"] = system_prompt
     yield _OkAgent()
 

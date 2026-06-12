@@ -3,19 +3,30 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
+from rehketo.agent.approval import resolve_interrupt
 from rehketo.agent.events import transform_chunk
 from rehketo.agent.graph import build_agent
 from rehketo.agent.prompt import assemble_system_prompt
+from rehketo.agent.segments import SegmentTracker
 from rehketo.agent.title import generate_title_if_needed
 from rehketo.core.logging import get_logger
 from rehketo.db import sessionmaker
-from rehketo.db.models import Conversation, Message, Run, UserPreferences
+from rehketo.db.models import (
+    Conversation,
+    Message,
+    Run,
+    RunEvent,
+    UserPreferences,
+    UserRole,
+)
+from rehketo.mcp.registry import build_run_toolset
+from rehketo.mcp.servers import allowed_servers
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,6 +56,10 @@ async def _load_history(
     )
     result: list[AIMessage | HumanMessage | SystemMessage] = []
     for m in msgs:
+        if isinstance(m.content, dict) and m.content.get("channel") == "thinking":
+            # Narration is not model context — only answers feed back,
+            # matching how Anthropic drops thinking between turns.
+            continue
         text = (
             m.content if isinstance(m.content, str) else str(m.content.get("text", ""))
         )
@@ -55,7 +70,73 @@ async def _load_history(
     return result
 
 
-async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  # orchestrator: three terminal branches in one function is the simplest correct shape
+async def _delta_times(db: AsyncSession, run_id: UUID) -> dict[str, datetime]:
+    """DB-clock timestamp of each AI turn's last delta event. Thinking rows
+    are stamped from these so the transcript sort compares one clock: the
+    app clock drifts from Postgres (observed ~100µs inversions), which
+    could sort narration below the tool chip it preceded."""
+    msg_id_col = RunEvent.payload["message_id"].astext.label("message_id")
+    rows = (
+        await db.execute(
+            select(
+                msg_id_col,
+                func.max(RunEvent.created_at),
+            )
+            .where(
+                RunEvent.run_id == run_id,
+                RunEvent.payload["type"].astext == "message.delta",
+            )
+            .group_by(msg_id_col)
+        )
+    ).all()
+    return {mid: at for mid, at in rows if mid is not None}
+
+
+def _assistant_rows(
+    segments: SegmentTracker,
+    conversation_id: UUID,
+    run_id: UUID,
+    delta_times: dict[str, datetime],
+) -> list[Message]:
+    """One Message row per AI turn. Thinking rows carry channel='thinking'
+    and are stamped from the DB clock via their last delta event so they
+    interleave correctly with the adapter-persisted tool rows; the final turn
+    is the answer — plain {text} content, created_at left to the DB default.
+    An empty run still persists the single empty answer row (it marks that an
+    attempt happened).
+
+    Clock-source note: thinking rows use the DB clock via their own delta
+    events (``delta_times`` mapping); ``seg.last_delta_at`` (app clock)
+    remains only as fallback for exotic providers where message_id is None.
+    The answer row and tool run_events also use the DB clock. sorted() in
+    get_conversation is stable and the pre-sort list puts messages before
+    tool items, so equal timestamps at microsecond resolution keep narration
+    above its tool chip."""
+    rows = [
+        Message(
+            id=uuid4(),
+            conversation_id=conversation_id,
+            role="assistant",
+            content={"text": seg.text, "channel": "thinking"},
+            run_id=run_id,
+            created_at=(delta_times.get(seg.message_id) if seg.message_id else None)
+            or seg.last_delta_at,
+        )
+        for seg in segments.thinking
+    ]
+    rows.append(
+        Message(
+            id=uuid4(),
+            conversation_id=conversation_id,
+            role="assistant",
+            content={"text": segments.answer_text},
+            run_id=run_id,
+        )
+    )
+    return rows
+
+
+async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR0912,PLR0915  # orchestrator: resume loop + three terminal branches is the simplest correct shape
     """Drive the agent for `run_id`. Called as an asyncio.Task.
 
     Terminal-event discipline: the SSE handler (and the UI's `subscribeRun`)
@@ -77,7 +158,7 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  #
         conversation_id: UUID = run.conversation_id
         user_id: UUID = run.user_id
 
-    assembled_text = ""
+    segments = SegmentTracker()
 
     try:
         try:
@@ -104,31 +185,59 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  #
                     )
                 ).scalar_one_or_none()
                 custom_instructions = prefs.custom_instructions if prefs else None
+                roles = (
+                    (
+                        await db.execute(
+                            select(UserRole.role).where(UserRole.user_id == user_id)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                servers = await allowed_servers(db, user_id=user_id, roles=roles)
             system_prompt = assemble_system_prompt(custom_instructions)
 
-            async for agent in build_agent(str(run_id), system_prompt):
-                async for chunk in agent.astream(
-                    {"messages": history},
-                    config={"configurable": {"thread_id": str(run_id)}},
-                    stream_mode="messages",
-                ):
-                    for event in transform_chunk(chunk):  # type: ignore[arg-type]
-                        await bus.publish(str(run_id), event)
-                        if event["type"] == "message.delta":
-                            assembled_text += str(event["delta"])
-
-            # Persist the assistant message and finalize the run.
-            assistant_id = uuid4()
-            async with sessionmaker()() as db:
-                db.add(
-                    Message(
-                        id=assistant_id,
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content={"text": assembled_text},
-                        run_id=run_id,
-                    )
+            # MCP clients live exactly as long as the agent run; the exit
+            # stack closes them on every path (success, failure, cancel).
+            async with contextlib.AsyncExitStack() as stack:
+                tools, interrupt_on = await build_run_toolset(
+                    stack, servers, run_id=str(run_id), bus=bus
                 )
+                async for agent in build_agent(
+                    str(run_id), system_prompt, tools=tools, interrupt_on=interrupt_on
+                ):
+                    config: Any = {"configurable": {"thread_id": str(run_id)}}
+                    stream_input: Any = {"messages": history}
+                    while True:
+                        async for chunk in agent.astream(
+                            stream_input,
+                            config=config,
+                            stream_mode="messages",
+                        ):
+                            for event in transform_chunk(chunk):  # type: ignore[arg-type]
+                                await bus.publish(str(run_id), event)
+                                if event["type"] == "message.delta":
+                                    segments.add_delta(
+                                        event.get("message_id"), str(event["delta"])
+                                    )
+                        if not interrupt_on:
+                            # No HITL middleware installed — the graph cannot
+                            # interrupt, so skip the checkpoint read.
+                            break
+                        resume = await resolve_interrupt(
+                            agent, config, run_id=run_id, bus=bus
+                        )
+                        if resume is None:
+                            break
+                        stream_input = resume
+
+            # Persist one assistant row per AI turn and finalize the run.
+            async with sessionmaker()() as db:
+                delta_times = await _delta_times(db, run_id)
+            rows = _assistant_rows(segments, conversation_id, run_id, delta_times)
+            async with sessionmaker()() as db:
+                for row in rows:
+                    db.add(row)
                 await db.execute(
                     update(Run)
                     .where(Run.id == run_id)
@@ -143,33 +252,38 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  #
                     .values(updated_at=datetime.now(UTC))
                 )
                 await db.commit()
-                # Re-read the persisted message so the wire shape matches the
-                # MessageOut that GET /conversations/{id} returns. The UI can
-                # then replace its streaming bubble with a server-authoritative
-                # object (same id, same created_at on reload).
-                persisted = (
-                    await db.execute(select(Message).where(Message.id == assistant_id))
-                ).scalar_one()
-                message_payload: dict[str, object] = {
-                    "id": str(persisted.id),
-                    "conversation_id": str(persisted.conversation_id),
-                    "role": persisted.role,
-                    "content": persisted.content,
-                    "run_id": str(persisted.run_id) if persisted.run_id else None,
-                    "created_at": persisted.created_at.isoformat()
-                    if persisted.created_at
-                    else None,
-                    "run_status": "succeeded",
-                    "run_error": None,
-                }
+                # Refresh each row so the wire shape matches the MessageOut
+                # that GET /conversations/{id} returns (DB-assigned
+                # created_at on the answer row). The UI replaces its
+                # streaming state with these server-authoritative objects.
+                message_payloads: list[dict[str, object]] = []
+                for row in rows:
+                    await db.refresh(row)
+                    message_payloads.append(
+                        {
+                            "id": str(row.id),
+                            "conversation_id": str(row.conversation_id),
+                            "role": row.role,
+                            "content": row.content,
+                            "run_id": str(row.run_id) if row.run_id else None,
+                            "created_at": row.created_at.isoformat()
+                            if row.created_at
+                            else None,
+                            "run_status": "succeeded",
+                            "run_error": None,
+                        }
+                    )
 
-            await bus.publish(
-                str(run_id),
-                {
-                    "type": "message.complete",
-                    "message": message_payload,
-                },
-            )
+            # Thinking rows first, answer last — the UI ends its streaming
+            # bubble on the answer's complete.
+            for payload in message_payloads:
+                await bus.publish(
+                    str(run_id),
+                    {
+                        "type": "message.complete",
+                        "message": payload,
+                    },
+                )
 
             # Emit succeeded eagerly so the UI clears its 'running' indicator as
             # soon as the reply is complete — before the title-generation window.
@@ -207,18 +321,15 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  #
             # `finally` then publishes run.ended after the shielded work completes.
             async def _finalize_cancel() -> None:
                 async with sessionmaker()() as db:
-                    # Persist the partial assistant text, same rationale as the
-                    # failed branch — reload shows a 'cancelled' badge via the
+                    # Persist the segments under the same rule as success —
+                    # completed turns as thinking, the partial tail as the
+                    # answer. Reload shows a 'cancelled' badge via the
                     # run_status join on MessageOut.
-                    db.add(
-                        Message(
-                            id=uuid4(),
-                            conversation_id=conversation_id,
-                            role="assistant",
-                            content={"text": assembled_text},
-                            run_id=run_id,
-                        )
-                    )
+                    cancel_delta_times = await _delta_times(db, run_id)
+                    for row in _assistant_rows(
+                        segments, conversation_id, run_id, cancel_delta_times
+                    ):
+                        db.add(row)
                     await db.execute(
                         update(Run)
                         .where(Run.id == run_id)
@@ -247,20 +358,16 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  #
             # is NOT a subclass of Exception in Python 3.8+, so it is not caught here.
             logger.exception("run_agent failed run_id=%s", str(run_id))
             async with sessionmaker()() as db:
-                # Persist whatever partial assistant text the stream produced.
-                # GET /conversations/{id} joins Run.status/Run.error so the UI
-                # can render this bubble with a 'failed' badge on reload without
-                # replaying the SSE stream. Empty text is fine — it still marks
-                # that an attempt happened.
-                db.add(
-                    Message(
-                        id=uuid4(),
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content={"text": assembled_text},
-                        run_id=run_id,
-                    )
-                )
+                # Persist whatever partial segments the stream produced —
+                # same thinking/answer rule as success. GET /conversations/{id}
+                # joins Run.status/Run.error so the UI renders the answer row
+                # with a 'failed' badge on reload. Empty text is fine — it
+                # still marks that an attempt happened.
+                fail_delta_times = await _delta_times(db, run_id)
+                for row in _assistant_rows(
+                    segments, conversation_id, run_id, fail_delta_times
+                ):
+                    db.add(row)
                 await db.execute(
                     update(Run)
                     .where(Run.id == run_id)
