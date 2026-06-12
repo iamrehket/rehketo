@@ -80,6 +80,29 @@ async def mk_running_run() -> str:
         return str(run.id)
 
 
+async def mk_pending_approval_run() -> str:
+    """Create user + conversation + a pending_approval Run; return run id."""
+    async with sessionmaker()() as db:
+        user = User(id=uuid4(), display_name="t", email=f"{uuid4().hex}@example.test")
+        conv = Conversation(id=uuid4(), user_id=user.id)
+        run = Run(
+            id=uuid4(),
+            conversation_id=conv.id,
+            user_id=user.id,
+            status="pending_approval",
+            model="test-model",
+        )
+        # No relationship() on these models, so SQLAlchemy won't order the
+        # inserts by FK — flush parent rows before their children.
+        db.add(user)
+        await db.flush()
+        db.add(conv)
+        await db.flush()
+        db.add(run)
+        await db.commit()
+        return str(run.id)
+
+
 async def seed_user_and_conv(
     db: AsyncSession,
     *,
