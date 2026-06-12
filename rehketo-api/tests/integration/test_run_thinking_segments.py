@@ -120,8 +120,10 @@ async def test_two_turn_run_persists_thinking_and_answer_rows(
         "channel": "thinking",
     }
     assert answer.content == {"text": "It is sunny."}
-    # Narration interleaves BEFORE the tool row it triggered.
-    assert thinking.created_at < tool_call_at
+    # Narration interleaves BEFORE the tool row it triggered. <= because
+    # the last delta event insert and the tool.call insert share the DB clock;
+    # microsecond equality is possible and renders correctly (stable sort).
+    assert thinking.created_at <= tool_call_at
 
     # --- No leak: the tool output appears in no message row.
     assert all("echo:" not in str(r.content) for r in msg_rows)

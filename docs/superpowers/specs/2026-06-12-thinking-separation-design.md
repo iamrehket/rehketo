@@ -77,7 +77,9 @@ segment's persisted `created_at` is its **last-delta time** (updated on
 every delta), because the boundary is only detectable at the next segment's
 first delta — after the tool rows were written. The last token of a turn
 always precedes its `tool.call` publish, so last-delta time interleaves
-correctly with the adapter-persisted tool rows.
+correctly with the adapter-persisted tool rows. Timestamps are read back from
+the delta events' `run_events.created_at` (DB clock) rather than the app
+clock, so the transcript sort never compares two clock sources.
 
 At finalize (all three terminal branches):
 

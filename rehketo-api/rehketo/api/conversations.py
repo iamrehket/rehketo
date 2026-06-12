@@ -311,8 +311,11 @@ async def get_conversation(
     ]
     tool_items: list[TranscriptItem] = list(await _tool_items(db, conv.id))
     approval_items: list[TranscriptItem] = list(await _approval_items(db, conv.id))
-    # sorted() is stable; tool.call always commits before the run's assistant
-    # message is inserted, so wall-clock timestamps order the transcript correctly.
+    # sorted() is stable; all transcript timestamps now use the DB clock —
+    # tool items from run_events, thinking rows copied from their last delta
+    # event, the answer from its insert default. The pre-sort list puts
+    # messages before tool items, so equal timestamps at microsecond resolution
+    # keep narration above its tool chip.
     items = sorted(
         message_items + tool_items + approval_items, key=lambda i: i.created_at
     )

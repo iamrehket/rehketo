@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from rehketo.agent.approval import resolve_interrupt
 from rehketo.agent.events import transform_chunk
@@ -17,7 +17,14 @@ from rehketo.agent.segments import SegmentTracker
 from rehketo.agent.title import generate_title_if_needed
 from rehketo.core.logging import get_logger
 from rehketo.db import sessionmaker
-from rehketo.db.models import Conversation, Message, Run, UserPreferences, UserRole
+from rehketo.db.models import (
+    Conversation,
+    Message,
+    Run,
+    RunEvent,
+    UserPreferences,
+    UserRole,
+)
 from rehketo.mcp.registry import build_run_toolset
 from rehketo.mcp.servers import allowed_servers
 
@@ -63,23 +70,48 @@ async def _load_history(
     return result
 
 
+async def _delta_times(db: AsyncSession, run_id: UUID) -> dict[str, datetime]:
+    """DB-clock timestamp of each AI turn's last delta event. Thinking rows
+    are stamped from these so the transcript sort compares one clock: the
+    app clock drifts from Postgres (observed ~100µs inversions), which
+    could sort narration below the tool chip it preceded."""
+    msg_id_col = RunEvent.payload["message_id"].astext.label("message_id")
+    rows = (
+        await db.execute(
+            select(
+                msg_id_col,
+                func.max(RunEvent.created_at),
+            )
+            .where(
+                RunEvent.run_id == run_id,
+                RunEvent.payload["type"].astext == "message.delta",
+            )
+            .group_by(msg_id_col)
+        )
+    ).all()
+    return {mid: at for mid, at in rows if mid is not None}
+
+
 def _assistant_rows(
-    segments: SegmentTracker, conversation_id: UUID, run_id: UUID
+    segments: SegmentTracker,
+    conversation_id: UUID,
+    run_id: UUID,
+    delta_times: dict[str, datetime],
 ) -> list[Message]:
     """One Message row per AI turn. Thinking rows carry channel='thinking'
-    and their last-delta timestamp so they interleave correctly with the
-    adapter-persisted tool rows; the final turn is the answer — plain {text}
-    content, created_at left to the DB default. An empty run still persists
-    the single empty answer row (it marks that an attempt happened).
+    and are stamped from the DB clock via their last delta event so they
+    interleave correctly with the adapter-persisted tool rows; the final turn
+    is the answer — plain {text} content, created_at left to the DB default.
+    An empty run still persists the single empty answer row (it marks that an
+    attempt happened).
 
-    Clock-source note: thinking rows are stamped with ``seg.last_delta_at``
-    (app-process clock) while the answer row and tool run_events use Postgres
-    ``func.now()`` (DB clock). The transcript GET sorts across both, which
-    works because the API and Postgres share the same host and their clocks
-    are closely synced. Revisit with a per-run sequence column if hosts split.
-    Two thinking rows can theoretically tie at microsecond resolution —
-    accepted; the symptom is two narration blobs swapping inside the Working
-    block, not data loss."""
+    Clock-source note: thinking rows use the DB clock via their own delta
+    events (``delta_times`` mapping); ``seg.last_delta_at`` (app clock)
+    remains only as fallback for exotic providers where message_id is None.
+    The answer row and tool run_events also use the DB clock. sorted() in
+    get_conversation is stable and the pre-sort list puts messages before
+    tool items, so equal timestamps at microsecond resolution keep narration
+    above its tool chip."""
     rows = [
         Message(
             id=uuid4(),
@@ -87,7 +119,8 @@ def _assistant_rows(
             role="assistant",
             content={"text": seg.text, "channel": "thinking"},
             run_id=run_id,
-            created_at=seg.last_delta_at,  # app clock; see clock-source note above
+            created_at=(delta_times.get(seg.message_id) if seg.message_id else None)
+            or seg.last_delta_at,
         )
         for seg in segments.thinking
     ]
@@ -199,7 +232,9 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                         stream_input = resume
 
             # Persist one assistant row per AI turn and finalize the run.
-            rows = _assistant_rows(segments, conversation_id, run_id)
+            async with sessionmaker()() as db:
+                delta_times = await _delta_times(db, run_id)
+            rows = _assistant_rows(segments, conversation_id, run_id, delta_times)
             async with sessionmaker()() as db:
                 for row in rows:
                     db.add(row)
@@ -290,7 +325,10 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                     # completed turns as thinking, the partial tail as the
                     # answer. Reload shows a 'cancelled' badge via the
                     # run_status join on MessageOut.
-                    for row in _assistant_rows(segments, conversation_id, run_id):
+                    cancel_delta_times = await _delta_times(db, run_id)
+                    for row in _assistant_rows(
+                        segments, conversation_id, run_id, cancel_delta_times
+                    ):
                         db.add(row)
                     await db.execute(
                         update(Run)
@@ -325,7 +363,10 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                 # joins Run.status/Run.error so the UI renders the answer row
                 # with a 'failed' badge on reload. Empty text is fine — it
                 # still marks that an attempt happened.
-                for row in _assistant_rows(segments, conversation_id, run_id):
+                fail_delta_times = await _delta_times(db, run_id)
+                for row in _assistant_rows(
+                    segments, conversation_id, run_id, fail_delta_times
+                ):
                     db.add(row)
                 await db.execute(
                     update(Run)
