@@ -228,6 +228,7 @@ async def test_corrupt_ciphertext_server_is_skipped(settings_env) -> None:
         auth_token_ct=b"garbage",
         allowed_roles=["User"],
         enabled=True,
+        auto_approve=False,
     )
 
     async with AsyncExitStack() as stack:

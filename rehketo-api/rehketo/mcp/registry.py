@@ -1,7 +1,8 @@
 """Per-run MCP client lifecycle: connect to each allowed server, list its
-tools, adapt them. Connections are per-run (opened by run_agent, closed via
-the caller's AsyncExitStack) — no shared state across requests or processes,
-the property M1 established and the M4 worker split depends on."""
+tools, adapt them, and build the per-tool HITL approval config from each
+server's auto_approve flag. Connections are per-run (opened by run_agent,
+closed via the caller's AsyncExitStack) — no shared state across requests or
+processes, the property M1 established and the M4 worker split depends on."""
 
 from __future__ import annotations
 
