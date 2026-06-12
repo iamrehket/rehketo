@@ -1,19 +1,24 @@
 <script lang="ts">
 	import AssistantBubble from './AssistantBubble.svelte';
+	import ApprovalCard from './ApprovalCard.svelte';
 	import MessageBubble from './MessageBubble.svelte';
 	import ToolChip from './ToolChip.svelte';
-	import type { RunStatus, TranscriptItem } from '$lib/types';
+	import type { ApprovalItem, RunStatus, TranscriptItem } from '$lib/types';
 
 	let {
 		items,
 		liveRunId = null,
 		streamingText = null,
-		streamingStatus = null
+		streamingStatus = null,
+		canDecide = false,
+		onDecide
 	}: {
 		items: TranscriptItem[];
 		liveRunId?: string | null;
 		streamingText?: string | null;
 		streamingStatus?: RunStatus | null;
+		canDecide?: boolean;
+		onDecide?: (item: ApprovalItem, decision: 'approve' | 'deny') => void;
 	} = $props();
 
 	let container: HTMLDivElement | undefined = $state();
@@ -43,12 +48,21 @@
 					<MessageBubble message={item} />
 				{:else if item.kind === 'tool'}
 					<ToolChip {item} live={item.run_id === liveRunId} />
+				{:else if item.kind === 'approval'}
+					<ApprovalCard
+						{item}
+						canDecide={canDecide && item.run_id === liveRunId}
+						onDecide={(decision) => onDecide?.(item, decision)}
+					/>
 				{/if}
 			</li>
 		{/each}
 		{#if showStreamingBubble}
 			<li>
 				<AssistantBubble text={streamingText ?? ''} streaming={isActivelyStreaming} />
+				{#if streamingStatus === 'pending_approval'}
+					<p class="mt-1 text-xs text-muted">Waiting for tool approval…</p>
+				{/if}
 			</li>
 		{/if}
 	</ul>

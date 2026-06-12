@@ -10,6 +10,7 @@
 	import { subscribeRun, type RunStreamSubscription } from '$lib/sse';
 	import {
 		ApiError,
+		type ApprovalItem,
 		type ConversationDetail,
 		type ErrorEnvelope,
 		type MessageKickoffOut,
@@ -96,6 +97,38 @@
 				items = items.map((i) =>
 					i.kind === 'tool' && i.run_id === event.run_id && i.call_id === event.call_id
 						? { ...i, result: event.result, is_error: event.is_error }
+						: i
+				);
+			},
+			onApprovalRequired: (event) => {
+				if (
+					!items.some(
+						(i) =>
+							i.kind === 'approval' &&
+							i.run_id === event.run_id &&
+							i.approval_id === event.approval_id
+					)
+				) {
+					items = [
+						...items,
+						{
+							kind: 'approval',
+							run_id: event.run_id,
+							approval_id: event.approval_id,
+							tool: event.tool,
+							arguments: event.arguments,
+							decision: null,
+							created_at: new Date(Date.now()).toISOString()
+						}
+					];
+				}
+			},
+			onApprovalDecision: (event) => {
+				// Resolve on the EVENT, not the POST response — a second tab
+				// (or another device) resolves the same card this way.
+				items = items.map((i) =>
+					i.kind === 'approval' && i.approval_id === event.approval_id
+						? { ...i, decision: event.decision }
 						: i
 				);
 			},
@@ -191,6 +224,20 @@
 		}
 	}
 
+	async function decideApproval(item: ApprovalItem, decision: 'approve' | 'deny'): Promise<void> {
+		try {
+			await apiFetch(`/runs/${item.run_id}/approvals/${item.approval_id}`, {
+				method: 'POST',
+				body: JSON.stringify({ decision })
+			});
+		} catch (err) {
+			// 409 = already decided (other tab) or run no longer pending; the
+			// decision event (or terminal status) updates the card — swallow.
+			if (err instanceof ApiError && err.status === 409) return;
+			if (err instanceof ApiError) console.warn('approval failed:', err.code, err.message);
+		}
+	}
+
 	onDestroy(() => {
 		subscription?.unsubscribe();
 		subscription = null;
@@ -206,7 +253,14 @@
 		</div>
 	{/if}
 
-	<MessageList {items} liveRunId={activeRunId} {streamingText} {streamingStatus} />
+	<MessageList
+		{items}
+		liveRunId={activeRunId}
+		{streamingText}
+		{streamingStatus}
+		canDecide={auth.can('chat.approve_tool_call')}
+		onDecide={decideApproval}
+	/>
 
 	{#if isStreaming && auth.can('chat.cancel_run')}
 		<div class="flex justify-center border-t border-border bg-bg/80 px-6 py-2">
