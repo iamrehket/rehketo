@@ -292,8 +292,9 @@ async def get_conversation(
             .limit(1)
         )
     ).scalar_one_or_none()
-    # Treat in-flight runs (queued/running) as "no terminal status yet" on the
-    # wire — the UI only uses run_status to render terminal-state badges.
+    # Treat in-flight runs (queued/running/pending_approval) as "no terminal
+    # status yet" on the wire — the UI only uses run_status to render
+    # terminal-state badges.
     terminal = {"succeeded", "failed", "cancelled"}
     message_items: list[TranscriptItem] = [
         MessageItem(
