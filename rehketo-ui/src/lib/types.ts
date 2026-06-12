@@ -73,6 +73,10 @@ export type ConversationList = {
 
 export type MessageContent = {
 	text: string;
+	// Present on intermediate "thinking" turns of a tool-using run; absent
+	// on answers and user messages. Matches the api's per-turn persistence
+	// (rehketo/agent/run.py _assistant_rows).
+	channel?: 'thinking';
 };
 
 export type MessageOut = {
