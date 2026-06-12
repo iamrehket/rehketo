@@ -35,8 +35,9 @@ reconfigure.
   because the event-publishing wrapper is ours regardless.
   `langchain-mcp-adapters` was rejected to avoid a second, overlapping
   MCP-ecosystem dependency.
-- **Out of scope:** MCP apps (M6), user-authored servers, per-user server
-  configuration, MCP resources and prompts (tools only).
+- **Out of scope:** MCP apps (M13, renumbered from M6 in the 2026-06-11 roadmap
+  revision), user-authored servers, per-user server configuration, MCP resources
+  and prompts (tools only).
 
 ## Schema (migration 0011)
 
