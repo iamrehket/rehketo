@@ -1,6 +1,77 @@
 {
   "components": {
     "schemas": {
+      "ApprovalDecisionIn": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "approve",
+              "deny"
+            ],
+            "title": "Decision",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "ApprovalDecisionIn",
+        "type": "object"
+      },
+      "ApprovalItem": {
+        "description": "A tool-approval request reconstructed from run_events on reload.\ndecision is None while undecided \u2014 on a pending_approval run the UI\nrenders live approve/deny buttons from exactly this state.",
+        "properties": {
+          "approval_id": {
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "kind": {
+            "const": "approval",
+            "default": "approval",
+            "title": "Kind",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "approval_id",
+          "tool",
+          "arguments",
+          "created_at"
+        ],
+        "title": "ApprovalItem",
+        "type": "object"
+      },
       "CapabilitiesOut": {
         "properties": {
           "actions": {
@@ -62,6 +133,7 @@
             "items": {
               "discriminator": {
                 "mapping": {
+                  "approval": "#/components/schemas/ApprovalItem",
                   "message": "#/components/schemas/MessageItem",
                   "tool": "#/components/schemas/ToolCallItem"
                 },
@@ -73,6 +145,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/ToolCallItem"
+                },
+                {
+                  "$ref": "#/components/schemas/ApprovalItem"
                 }
               ]
             },
@@ -268,6 +343,11 @@
             ],
             "title": "Auth Token"
           },
+          "auto_approve": {
+            "default": false,
+            "title": "Auto Approve",
+            "type": "boolean"
+          },
           "enabled": {
             "default": true,
             "title": "Enabled",
@@ -320,6 +400,10 @@
             "title": "Allowed Roles",
             "type": "array"
           },
+          "auto_approve": {
+            "title": "Auto Approve",
+            "type": "boolean"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -359,6 +443,7 @@
           "has_auth_token",
           "allowed_roles",
           "enabled",
+          "auto_approve",
           "created_at",
           "updated_at"
         ],
@@ -392,6 +477,17 @@
               }
             ],
             "title": "Auth Token"
+          },
+          "auto_approve": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Approve"
           },
           "enabled": {
             "anyOf": [
@@ -1700,6 +1796,70 @@
           }
         ],
         "summary": "Get Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/runs/{run_id}/approvals/{approval_id}": {
+      "post": {
+        "description": "Record the user's decision for one pending tool call. The decision is\npublished as a durable tool.approval_decision event; the waiting run task\nconsumes it from its own bus subscription. First decision wins (409 on a\nrepeat); validation is against run_events, the single source of truth.",
+        "operationId": "decide_approval_runs__run_id__approvals__approval_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          },
+          {
+            "CSRFToken": []
+          }
+        ],
+        "summary": "Decide Approval",
         "tags": [
           "runs"
         ]
