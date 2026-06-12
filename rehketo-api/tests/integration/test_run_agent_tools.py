@@ -45,6 +45,7 @@ async def _seed(db, *, server_roles: list[str] | None = None) -> Any:
             auth_token_ct=None,
             allowed_roles=server_roles if server_roles is not None else ["User"],
             enabled=True,
+            auto_approve=True,
         )
     )
     await db.commit()
@@ -80,7 +81,10 @@ async def test_run_agent_executes_tools_and_streams_events(
             yield (AIMessageChunk(content="done", id="msg-fake-1"), {})
 
     async def _fake_build_agent(
-        run_id: str, system_prompt: str, tools: Sequence[Any] = ()
+        run_id: str,
+        system_prompt: str,
+        tools: Sequence[Any] = (),
+        interrupt_on: Any = None,
     ) -> AsyncIterator[_ToolCallingAgent]:
         captured["tools"] = list(tools)
         yield _ToolCallingAgent(tools)
@@ -128,7 +132,10 @@ async def test_user_without_server_role_gets_no_tools(
             yield (AIMessageChunk(content="hello", id="msg-fake-2"), {})
 
     async def _fake_build_agent(
-        run_id: str, system_prompt: str, tools: Sequence[Any] = ()
+        run_id: str,
+        system_prompt: str,
+        tools: Sequence[Any] = (),
+        interrupt_on: Any = None,
     ) -> AsyncIterator[_QuietAgent]:
         captured["tools"] = list(tools)
         yield _QuietAgent()
@@ -187,7 +194,10 @@ async def test_dying_client_close_does_not_flip_run_to_failed(
             yield (AIMessageChunk(content="ok", id="msg-fake-3"), {})
 
     async def _fake_build_agent(
-        run_id: str, system_prompt: str, tools: Sequence[Any] = ()
+        run_id: str,
+        system_prompt: str,
+        tools: Sequence[Any] = (),
+        interrupt_on: Any = None,
     ) -> AsyncIterator[_QuietAgent]:
         yield _QuietAgent(tools)
 

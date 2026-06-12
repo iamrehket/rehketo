@@ -121,10 +121,12 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: PLR0915  #
             # MCP clients live exactly as long as the agent run; the exit
             # stack closes them on every path (success, failure, cancel).
             async with contextlib.AsyncExitStack() as stack:
-                tools = await build_run_toolset(
+                tools, interrupt_on = await build_run_toolset(
                     stack, servers, run_id=str(run_id), bus=bus
                 )
-                async for agent in build_agent(str(run_id), system_prompt, tools=tools):
+                async for agent in build_agent(
+                    str(run_id), system_prompt, tools=tools, interrupt_on=interrupt_on
+                ):
                     async for chunk in agent.astream(
                         {"messages": history},
                         config={"configurable": {"thread_id": str(run_id)}},

@@ -39,7 +39,10 @@ class _PartialThenHangAgent:
 
 
 async def _fake_build_agent(
-    run_id: str, system_prompt: str, tools: Sequence[Any] = ()
+    run_id: str,
+    system_prompt: str,
+    tools: Sequence[Any] = (),
+    interrupt_on: Any = None,
 ) -> AsyncIterator[_PartialThenHangAgent]:
     yield _PartialThenHangAgent()
 
@@ -54,7 +57,10 @@ class _RaisingAgent:
 
 
 async def _fake_failing_build_agent(
-    run_id: str, system_prompt: str, tools: Sequence[Any] = ()
+    run_id: str,
+    system_prompt: str,
+    tools: Sequence[Any] = (),
+    interrupt_on: Any = None,
 ) -> AsyncIterator[_RaisingAgent]:
     yield _RaisingAgent()
 
@@ -219,7 +225,10 @@ async def test_succeeded_run_message_has_succeeded_status(
             yield (AIMessageChunk(content="ok", id="m1"), {"langgraph_node": "agent"})
 
     async def _build(
-        run_id: str, system_prompt: str, tools: Sequence[Any] = ()
+        run_id: str,
+        system_prompt: str,
+        tools: Sequence[Any] = (),
+        interrupt_on: Any = None,
     ) -> AsyncIterator[_HiAgent]:
         yield _HiAgent()
 

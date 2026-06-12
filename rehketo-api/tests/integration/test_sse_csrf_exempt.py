@@ -38,7 +38,10 @@ class _ImmediateAgent:
 
 
 async def _fake_build_agent(
-    run_id: str, system_prompt: str, tools: Sequence[Any] = ()
+    run_id: str,
+    system_prompt: str,
+    tools: Sequence[Any] = (),
+    interrupt_on: Any = None,
 ) -> AsyncIterator[_ImmediateAgent]:
     yield _ImmediateAgent()
 

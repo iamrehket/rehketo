@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
+from langchain.agents.middleware import InterruptOnConfig
 
 from rehketo.auth.crypto import decrypt_token
 from rehketo.core.logging import format_exc_for_log, get_logger
@@ -61,8 +62,16 @@ async def build_run_toolset(
     *,
     run_id: str,
     bus: RunEventBus,
-) -> list[StructuredTool]:
+) -> tuple[list[StructuredTool], dict[str, InterruptOnConfig]]:
+    """Connect to each allowed MCP server, list and adapt its tools.
+
+    Returns the adapted tools plus the HITL interrupt config: every tool from
+    an auto_approve=False server requires per-call user approval (approve/reject
+    only — the M3.5 decision vocabulary); tools from trusted servers are absent,
+    which the middleware auto-approves.
+    """
     tools: list[StructuredTool] = []
+    interrupt_on: dict[str, InterruptOnConfig] = {}
     for server in servers:
         try:
             client = _client_for(server)
@@ -99,4 +108,8 @@ async def build_run_toolset(
                     bus=bus,
                 )
             )
-    return tools
+            if not server.auto_approve:
+                interrupt_on[full_name] = InterruptOnConfig(
+                    allowed_decisions=["approve", "reject"]
+                )
+    return tools, interrupt_on

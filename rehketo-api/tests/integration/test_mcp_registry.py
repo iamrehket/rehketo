@@ -31,7 +31,12 @@ def _echo_server() -> FastMCP:
     return server
 
 
-def _row(name: str, url: str = "https://unused.example.com/mcp") -> McpServer:
+def _row(
+    name: str,
+    url: str = "https://unused.example.com/mcp",
+    *,
+    auto_approve: bool = False,
+) -> McpServer:
     return McpServer(
         id=uuid4(),
         name=name,
@@ -39,6 +44,7 @@ def _row(name: str, url: str = "https://unused.example.com/mcp") -> McpServer:
         auth_token_ct=None,
         allowed_roles=["User"],
         enabled=True,
+        auto_approve=auto_approve,
     )
 
 
@@ -48,7 +54,7 @@ async def test_builds_tools_from_reachable_server(settings_env, monkeypatch) -> 
     bus = FakeBus()
 
     async with AsyncExitStack() as stack:
-        tools = await registry.build_run_toolset(
+        tools, _interrupt_on = await registry.build_run_toolset(
             stack, [_row("testsrv")], run_id="r1", bus=bus
         )
         assert [t.name for t in tools] == ["testsrv__echo"]
@@ -69,7 +75,7 @@ async def test_unreachable_server_is_skipped(settings_env, monkeypatch) -> None:
     monkeypatch.setattr(registry, "_client_for", _client_for)
 
     async with AsyncExitStack() as stack:
-        tools = await registry.build_run_toolset(
+        tools, _interrupt_on = await registry.build_run_toolset(
             stack, [_row("bad"), _row("testsrv")], run_id="r1", bus=FakeBus()
         )
         assert [t.name for t in tools] == ["testsrv__echo"]
@@ -77,10 +83,11 @@ async def test_unreachable_server_is_skipped(settings_env, monkeypatch) -> None:
 
 async def test_no_servers_yields_no_tools(settings_env) -> None:
     async with AsyncExitStack() as stack:
-        assert (
-            await registry.build_run_toolset(stack, [], run_id="r1", bus=FakeBus())
-            == []
+        tools, interrupt_on = await registry.build_run_toolset(
+            stack, [], run_id="r1", bus=FakeBus()
         )
+    assert tools == []
+    assert interrupt_on == {}
 
 
 async def test_invalid_combined_name_is_skipped(settings_env, monkeypatch) -> None:
@@ -103,7 +110,7 @@ async def test_invalid_combined_name_is_skipped(settings_env, monkeypatch) -> No
     bus = FakeBus()
 
     async with AsyncExitStack() as stack:
-        tools = await registry.build_run_toolset(
+        tools, _interrupt_on = await registry.build_run_toolset(
             stack, [_row("testsrv")], run_id="r1", bus=bus
         )
 
@@ -155,7 +162,7 @@ async def test_tool_name_with_trailing_newline_is_skipped(
     monkeypatch.setattr(registry, "_client_for", lambda s: stub)
 
     async with AsyncExitStack() as stack:
-        tools = await registry.build_run_toolset(
+        tools, _interrupt_on = await registry.build_run_toolset(
             stack, [_row("testsrv")], run_id="r1", bus=FakeBus()
         )
 
@@ -199,7 +206,7 @@ async def test_hung_server_is_skipped_others_survive(settings_env, monkeypatch) 
     monkeypatch.setattr(registry, "_SERVER_CONNECT_TIMEOUT_S", 0.05)
 
     async with AsyncExitStack() as stack:
-        tools = await registry.build_run_toolset(
+        tools, _interrupt_on = await registry.build_run_toolset(
             stack, [_row("hung"), _row("testsrv")], run_id="r1", bus=FakeBus()
         )
 
@@ -224,11 +231,12 @@ async def test_corrupt_ciphertext_server_is_skipped(settings_env) -> None:
     )
 
     async with AsyncExitStack() as stack:
-        tools = await registry.build_run_toolset(
+        tools, interrupt_on = await registry.build_run_toolset(
             stack, [bad_row], run_id="r1", bus=FakeBus()
         )
 
     assert tools == []
+    assert interrupt_on == {}
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +287,39 @@ async def test_dying_close_does_not_escape_stack(settings_env, monkeypatch) -> N
     # Must not raise — the tool list is built, then the stack exits cleanly
     # despite close() raising RuntimeError.
     async with AsyncExitStack() as stack:
-        tools = await registry.build_run_toolset(
+        tools, _interrupt_on = await registry.build_run_toolset(
             stack, [_row("testsrv")], run_id="r1", bus=FakeBus()
         )
         assert [t.name for t in tools] == ["testsrv__good"]
+
+
+async def test_interrupt_on_built_from_auto_approve(settings_env, monkeypatch) -> None:
+    server = _echo_server()
+    monkeypatch.setattr(registry, "_client_for", lambda s: Client(server))
+    bus = FakeBus()
+
+    async with AsyncExitStack() as stack:
+        tools, interrupt_on = await registry.build_run_toolset(
+            stack,
+            [_row("untrusted"), _row("trusted", auto_approve=True)],
+            run_id="r1",
+            bus=bus,
+        )
+    assert {t.name for t in tools} == {"untrusted__echo", "trusted__echo"}
+    # Only tools from auto_approve=False servers require review; approve and
+    # reject are the M3.5 decision vocabulary (no edit/respond).
+    assert set(interrupt_on) == {"untrusted__echo"}
+    assert interrupt_on["untrusted__echo"]["allowed_decisions"] == ["approve", "reject"]
+
+
+async def test_all_trusted_servers_yield_empty_interrupt_on(
+    settings_env, monkeypatch
+) -> None:
+    server = _echo_server()
+    monkeypatch.setattr(registry, "_client_for", lambda s: Client(server))
+
+    async with AsyncExitStack() as stack:
+        _tools, interrupt_on = await registry.build_run_toolset(
+            stack, [_row("trusted", auto_approve=True)], run_id="r1", bus=FakeBus()
+        )
+    assert interrupt_on == {}
