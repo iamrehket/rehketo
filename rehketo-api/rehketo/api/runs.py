@@ -187,6 +187,10 @@ async def decide_approval(
         raise HTTPException(status_code=404, detail="approval not found")
     if "tool.approval_decision" in types:
         raise HTTPException(status_code=409, detail="approval already decided")
+    # Check-then-publish is not atomic: two racing POSTs can both pass the
+    # duplicate guard and journal two decision events. Safe today because
+    # wait_for_decisions takes the first per id and drops the rest; revisit
+    # at the M4 worker split.
     await request.app.state.event_bus.publish(
         str(run_id),
         {
