@@ -1,18 +1,13 @@
 <script lang="ts">
-	import { buildPatchBody, type McpServerPatchBody } from '$lib/mcp-server-form';
+	import {
+		buildPatchBody,
+		type McpServerCreateBody,
+		type McpServerPatchBody
+	} from '$lib/mcp-server-form';
 	import type { McpServerOut } from '$lib/types';
 
 	// Source of truth for roles: rehketo-api/rehketo/permissions/roles.py.
 	const ROLES = ['Admin', 'Moderator', 'User'];
-
-	type CreateBody = {
-		name: string;
-		url: string;
-		auth_token: string | null;
-		allowed_roles: string[];
-		enabled: boolean;
-		auto_approve: boolean;
-	};
 
 	let {
 		server = null,
@@ -22,12 +17,17 @@
 	}: {
 		server?: McpServerOut | null;
 		busy?: boolean;
-		onSubmit: (body: CreateBody | McpServerPatchBody) => void;
+		onSubmit: (body: McpServerCreateBody | McpServerPatchBody) => void;
 		onCancel?: () => void;
 	} = $props();
 
 	// Reactive so that `{#if isEdit}` blocks update if `server` prop changes.
 	const isEdit = $derived(server !== null);
+
+	// Input ids must be unique per instance: an open edit form and the always-present
+	// create form coexist on the page, so a shared id would duplicate in the DOM and
+	// mis-wire `<label for>`. Create keeps the bare `mcp-*` ids the page tests target.
+	const uid = $derived(server ? `mcp-${server.id}` : 'mcp');
 
 	// `server` is a one-time initialiser: each form instance edits one row.
 	// svelte-ignore state_referenced_locally
@@ -62,10 +62,10 @@
 </script>
 
 <div class="flex flex-col gap-3">
-	<label class="text-xs text-muted" for="mcp-name">Name (tool prefix)</label>
+	<label class="text-xs text-muted" for={`${uid}-name`}>Name (tool prefix)</label>
 	<!-- Name is the immutable tool prefix: editable on create, read-only on edit. -->
 	<input
-		id="mcp-name"
+		id={`${uid}-name`}
 		data-field="name"
 		bind:value={name}
 		readonly={isEdit}
@@ -73,20 +73,20 @@
 		class="rounded-md border border-border p-2 text-sm {isEdit ? 'bg-surface text-muted' : 'bg-bg'}"
 	/>
 
-	<label class="text-xs text-muted" for="mcp-url">URL</label>
+	<label class="text-xs text-muted" for={`${uid}-url`}>URL</label>
 	<input
-		id="mcp-url"
+		id={`${uid}-url`}
 		data-field="url"
 		bind:value={url}
 		placeholder="https://host/mcp"
 		class="rounded-md border border-border bg-bg p-2 text-sm"
 	/>
 
-	<label class="text-xs text-muted" for="mcp-token">
+	<label class="text-xs text-muted" for={`${uid}-token`}>
 		Bearer token{isEdit ? '' : ' (optional, write-only)'}
 	</label>
 	<input
-		id="mcp-token"
+		id={`${uid}-token`}
 		data-field="token"
 		bind:value={authToken}
 		type="password"
@@ -117,7 +117,11 @@
 	</fieldset>
 
 	<label class="flex items-center gap-2 text-sm">
-		<input type="checkbox" bind:checked={autoApprove} />
+		<input
+			id={isEdit ? undefined : 'mcp-auto-approve'}
+			type="checkbox"
+			bind:checked={autoApprove}
+		/>
 		Auto-approve tool calls (trusted server — skips per-call user approval)
 	</label>
 
@@ -133,6 +137,7 @@
 			</button>
 		{/if}
 		<button
+			id={isEdit ? undefined : 'mcp-create'}
 			type="button"
 			data-action="submit"
 			onclick={submit}

@@ -14,6 +14,18 @@ export type McpServerPatchBody = {
 	auth_token?: string | null;
 };
 
+// Full body for creating a server (POST /admin/mcp-servers). Unlike the PATCH
+// body, `name` and `enabled` are always sent on create. Shared by the form
+// component and the settings page so the shape can't drift between them.
+export type McpServerCreateBody = {
+	name: string;
+	url: string;
+	auth_token: string | null;
+	allowed_roles: string[];
+	enabled: boolean;
+	auto_approve: boolean;
+};
+
 export type McpFormState = {
 	url: string;
 	authToken: string;
