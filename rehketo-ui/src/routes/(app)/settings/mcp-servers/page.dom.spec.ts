@@ -9,6 +9,9 @@ import { apiFetch } from '$lib/api';
 import { toasts } from '$lib/stores/toasts.svelte';
 import type { McpServerOut } from '$lib/types';
 
+// Keep a typed reference to the mock so edit-suite beforeEach can call mockReset.
+const apiFetchMock = vi.mocked(apiFetch);
+
 vi.mock('$lib/api', () => ({ apiFetch: vi.fn() }));
 
 function server(overrides: Partial<McpServerOut> = {}): McpServerOut {
@@ -217,6 +220,112 @@ describe('MCP servers admin page', () => {
 		await vi.waitFor(() => {
 			expect(toasts.items.some((t) => t.variant === 'error')).toBe(true);
 		});
+		unmount(app);
+	});
+});
+
+describe('MCP servers page — edit', () => {
+	function editServer(overrides: Partial<McpServerOut> = {}): McpServerOut {
+		return {
+			id: 'srv-1',
+			name: 'github',
+			url: 'https://host/mcp',
+			has_auth_token: true,
+			allowed_roles: ['Admin'],
+			enabled: true,
+			auto_approve: false,
+			created_at: '2026-06-13T00:00:00Z',
+			updated_at: '2026-06-13T00:00:00Z',
+			...overrides
+		};
+	}
+
+	function mountPage(servers: McpServerOut[]) {
+		return mount(Page, {
+			target: document.body,
+			props: { data: { authenticated: true, servers } }
+		});
+	}
+
+	beforeEach(() => {
+		// Self-contained: don't depend on the outer suite's cleanup running first.
+		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+		apiFetchMock.mockReset();
+		for (const t of [...toasts.items]) toasts.dismiss(t.id);
+	});
+
+	afterEach(() => {
+		document.body.innerHTML = '';
+	});
+
+	it('expands a row into an edit form when Edit is clicked', () => {
+		const app = mountPage([editServer()]);
+		// Before clicking Edit, no edit form exists inside the list row.
+		const list = document.querySelector('ul') as HTMLUListElement;
+		expect(list.querySelector('[data-field="url"]')).toBeNull();
+		(document.querySelector('[data-action="edit"]') as HTMLButtonElement).click();
+		flushSync();
+		const nameEl = list.querySelector('[data-field="name"]') as HTMLInputElement;
+		expect(nameEl.readOnly).toBe(true);
+		expect(nameEl.value).toBe('github');
+		unmount(app);
+	});
+
+	it('opens only one editor at a time', () => {
+		const app = mountPage([
+			editServer({ id: 'a', name: 'aaa' }),
+			editServer({ id: 'b', name: 'bbb' })
+		]);
+		const list = document.querySelector('ul') as HTMLUListElement;
+		const editButtons = document.querySelectorAll('[data-action="edit"]');
+		(editButtons[0] as HTMLButtonElement).click();
+		flushSync();
+		(editButtons[1] as HTMLButtonElement).click();
+		flushSync();
+		// Only one edit form open inside the list at a time, and it's the second row's.
+		const openNames = list.querySelectorAll('[data-field="name"]');
+		expect(openNames.length).toBe(1);
+		expect((openNames[0] as HTMLInputElement).value).toBe('bbb');
+		unmount(app);
+	});
+
+	it('PATCHes on save and updates the row', async () => {
+		apiFetchMock.mockResolvedValue(editServer({ url: 'https://new/mcp' }));
+		const app = mountPage([editServer()]);
+		(document.querySelector('[data-action="edit"]') as HTMLButtonElement).click();
+		flushSync();
+		(document.querySelector('[data-action="submit"]') as HTMLButtonElement).click();
+		await Promise.resolve();
+		expect(apiFetch).toHaveBeenCalledWith(
+			'/admin/mcp-servers/srv-1',
+			expect.objectContaining({ method: 'PATCH' })
+		);
+		unmount(app);
+	});
+
+	it('an in-flight save does not disable the create form', () => {
+		// A save that never resolves keeps the edit form's busy flag set.
+		apiFetchMock.mockReturnValue(new Promise(() => {}));
+		const app = mountPage([editServer()]);
+
+		// Fill the always-present create form so its Add button is gated only by busy.
+		const createName = document.querySelector('#mcp-name') as HTMLInputElement;
+		createName.value = 'newsrv';
+		createName.dispatchEvent(new Event('input', { bubbles: true }));
+		const createUrl = document.querySelector('#mcp-url') as HTMLInputElement;
+		createUrl.value = 'https://new.example.com/mcp';
+		createUrl.dispatchEvent(new Event('input', { bubbles: true }));
+		flushSync();
+
+		// Open the edit form and start a save that stays pending.
+		(document.querySelector('[data-action="edit"]') as HTMLButtonElement).click();
+		flushSync();
+		(document.querySelector('[data-action="submit"]') as HTMLButtonElement).click();
+		flushSync();
+
+		// The Add button must stay enabled despite the in-flight edit save.
+		expect((document.querySelector('#mcp-create') as HTMLButtonElement).disabled).toBe(false);
 		unmount(app);
 	});
 });

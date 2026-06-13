@@ -1,24 +1,21 @@
 <script lang="ts">
 	import { apiFetch } from '$lib/api';
+	import McpServerForm from '$lib/components/McpServerForm.svelte';
+	import type { McpServerCreateBody, McpServerPatchBody } from '$lib/mcp-server-form';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { ApiError, type McpServerOut } from '$lib/types';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
-	// Source of truth for roles: rehketo-api/rehketo/permissions/roles.py — update both when roles change.
-	const ROLES = ['Admin', 'Moderator', 'User'];
-
 	// Snapshot the server-loaded value into local state. data.servers is a one-time initialiser.
 	// svelte-ignore state_referenced_locally
 	let servers = $state<McpServerOut[]>(data.servers);
-
-	let name = $state('');
-	let url = $state('');
-	let authToken = $state('');
-	let allowedRoles = $state<string[]>([...ROLES]);
-	let autoApprove = $state(false);
-	let busy = $state(false);
+	let editingId = $state<string | null>(null);
+	// Separate flags: the create form and an open edit form coexist, so an
+	// in-flight save must not disable the Add form (and vice versa).
+	let createBusy = $state(false);
+	let editBusy = $state(false);
 
 	function fail(action: string, err: unknown): void {
 		if (err instanceof ApiError) console.warn(`${action} failed:`, err.code, err.message);
@@ -29,31 +26,36 @@
 		}
 	}
 
-	async function create(): Promise<void> {
-		busy = true;
+	async function create(body: McpServerCreateBody): Promise<void> {
+		createBusy = true;
 		try {
 			const created = await apiFetch<McpServerOut>('/admin/mcp-servers', {
 				method: 'POST',
-				body: JSON.stringify({
-					name,
-					url,
-					auth_token: authToken || null,
-					allowed_roles: allowedRoles,
-					enabled: true,
-					auto_approve: autoApprove
-				})
+				body: JSON.stringify(body)
 			});
 			servers = [created, ...servers];
-			name = '';
-			url = '';
-			authToken = '';
-			allowedRoles = [...ROLES];
-			autoApprove = false;
 			toasts.push({ variant: 'info', message: 'MCP server added.' });
 		} catch (err) {
 			fail('add', err);
 		} finally {
-			busy = false;
+			createBusy = false;
+		}
+	}
+
+	async function save(server: McpServerOut, body: McpServerPatchBody): Promise<void> {
+		editBusy = true;
+		try {
+			const updated = await apiFetch<McpServerOut>(`/admin/mcp-servers/${server.id}`, {
+				method: 'PATCH',
+				body: JSON.stringify(body)
+			});
+			servers = servers.map((s) => (s.id === updated.id ? updated : s));
+			editingId = null;
+			toasts.push({ variant: 'info', message: 'MCP server updated.' });
+		} catch (err) {
+			fail('update', err);
+		} finally {
+			editBusy = false;
 		}
 	}
 
@@ -118,6 +120,14 @@
 					<div class="flex gap-2">
 						<button
 							type="button"
+							data-action="edit"
+							onclick={() => (editingId = editingId === server.id ? null : server.id)}
+							class="rounded-md border border-border px-2 py-1 text-xs hover:bg-surface-hover"
+						>
+							Edit
+						</button>
+						<button
+							type="button"
 							data-action="toggle"
 							onclick={() => toggle(server)}
 							class="rounded-md border border-border px-2 py-1 text-xs hover:bg-surface-hover"
@@ -142,6 +152,16 @@
 						</button>
 					</div>
 				</div>
+				{#if editingId === server.id}
+					<div class="mt-3 border-t border-border pt-3">
+						<McpServerForm
+							{server}
+							busy={editBusy}
+							onSubmit={(body) => save(server, body as McpServerPatchBody)}
+							onCancel={() => (editingId = null)}
+						/>
+					</div>
+				{/if}
 			</li>
 		{:else}
 			<li class="text-sm text-muted">No servers configured.</li>
@@ -150,51 +170,12 @@
 
 	<section class="mt-8 rounded-md border border-border bg-surface p-4">
 		<h2 class="text-sm font-semibold">Add server</h2>
-		<div class="mt-3 flex flex-col gap-3">
-			<label class="text-xs text-muted" for="mcp-name">Name (tool prefix)</label>
-			<input
-				id="mcp-name"
-				bind:value={name}
-				placeholder="github"
-				class="rounded-md border border-border bg-bg p-2 text-sm"
+		<div class="mt-3">
+			<McpServerForm
+				server={null}
+				busy={createBusy}
+				onSubmit={(body) => create(body as McpServerCreateBody)}
 			/>
-			<label class="text-xs text-muted" for="mcp-url">URL</label>
-			<input
-				id="mcp-url"
-				bind:value={url}
-				placeholder="https://host/mcp"
-				class="rounded-md border border-border bg-bg p-2 text-sm"
-			/>
-			<label class="text-xs text-muted" for="mcp-token">Bearer token (optional, write-only)</label>
-			<input
-				id="mcp-token"
-				bind:value={authToken}
-				type="password"
-				autocomplete="off"
-				class="rounded-md border border-border bg-bg p-2 text-sm"
-			/>
-			<fieldset class="flex gap-4 text-sm">
-				<legend class="text-xs text-muted">Allowed roles</legend>
-				{#each ROLES as role (role)}
-					<label class="flex items-center gap-1">
-						<input type="checkbox" value={role} bind:group={allowedRoles} />
-						{role}
-					</label>
-				{/each}
-			</fieldset>
-			<label class="flex items-center gap-2 text-sm">
-				<input id="mcp-auto-approve" type="checkbox" bind:checked={autoApprove} />
-				Auto-approve tool calls (trusted server — skips per-call user approval)
-			</label>
-			<button
-				id="mcp-create"
-				type="button"
-				onclick={create}
-				disabled={busy || !name || !url}
-				class="self-end rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-			>
-				Add
-			</button>
 		</div>
 	</section>
 </div>
