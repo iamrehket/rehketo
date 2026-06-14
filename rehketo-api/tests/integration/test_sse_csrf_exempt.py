@@ -11,7 +11,7 @@ proves that the middleware passes the GET through unchallenged.
 
 from __future__ import annotations
 
-import asyncio
+import json
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -22,8 +22,8 @@ from rehketo.auth.cookies import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
 from rehketo.auth.csrf import issue_csrf_token
 from rehketo.auth.sessions import create_session
 from rehketo.db.models import Conversation, User, UserRole
-from rehketo.main import create_app
 from rehketo.runs.registry import reset_registry_for_tests
+from tests.integration._helpers import live_app
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Sequence
@@ -74,8 +74,10 @@ async def test_sse_subscribe_does_not_require_csrf(
     )
     csrf = issue_csrf_token(str(sid))
 
-    app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+    async with (
+        live_app() as app,
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c,
+    ):
         r = await c.post(
             f"/conversations/{conv.id}/messages",
             cookies={SESSION_COOKIE: str(sid), CSRF_COOKIE: csrf},
@@ -85,15 +87,19 @@ async def test_sse_subscribe_does_not_require_csrf(
         assert r.status_code == 202
         run_id = r.json()["run_id"]
 
-        # Let the run start so the SSE stream has something to return.
-        await asyncio.sleep(0.1)
-
         # Open SSE without any CSRF cookie or header — only the session cookie.
+        # A 200 here confirms GET bypasses CSRF middleware; drain until run.ended
+        # so the stream closes naturally (the worker is what executes the run).
+        events: list[dict[str, Any]] = []
         async with c.stream(
             "GET",
             f"/runs/{run_id}/events",
             cookies={SESSION_COOKIE: str(sid)},
             # Deliberately omit CSRF_COOKIE and CSRF_HEADER
         ) as resp:
-            # A 200 here confirms GET bypasses CSRF middleware.
             assert resp.status_code == 200
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    events.append(json.loads(line[6:]))
+                    if events[-1].get("type") == "run.ended":
+                        break

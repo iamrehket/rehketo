@@ -8,6 +8,7 @@ streaming agent that bypasses Bifrost.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
@@ -34,23 +35,22 @@ if TYPE_CHECKING:
 
 @asynccontextmanager
 async def live_app() -> AsyncIterator[FastAPI]:
-    """create_app() with its event bus + control listener started, like
-    _lifespan does.
+    """create_app() with its event bus started, plus an in-process worker that
+    claims and runs queued runs — the post-M4 execution path. httpx's
+    ASGITransport never runs lifespan, so we start the bus here; the worker is
+    what turns a queued run into a live stream. Use in any test that posts a
+    message and consumes its SSE, or cancels a run."""
+    from rehketo.runs.worker import run_worker
 
-    httpx's ASGITransport never runs lifespan, and PostgresEventBus delivers
-    live wakes only from the LISTEN task started there — without it a
-    subscriber sees new events on the slow fallback re-poll, which loses to
-    drain_sse's timeout. The control listener is what makes POST /cancel
-    actually cancel the local task. Use this in any test that consumes SSE
-    while the run is still streaming, or cancels a run.
-    """
     app = create_app()
     await app.state.event_bus.start()
-    await app.state.control_listener.start()
+    worker = asyncio.create_task(run_worker(app.state.event_bus, poll_interval=0.25))
     try:
         yield app
     finally:
-        await app.state.control_listener.stop()
+        worker.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await worker
         await app.state.event_bus.stop()
 
 
