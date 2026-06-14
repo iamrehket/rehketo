@@ -48,10 +48,18 @@ async def reap_stale_runs(
                 str(run_id),
                 {"type": "run.status", "status": "failed", "error": error},
             )
+        except Exception:
+            logger.warning(
+                "failed to publish run.status for reaped run %s", run_id, exc_info=True
+            )
+        # Guaranteed terminator — isolated so a failed status publish can't
+        # strand a subscriber (the row is already 'failed' and won't be reaped
+        # again).
+        try:
             await bus.publish(str(run_id), {"type": "run.ended"})
         except Exception:
             logger.warning(
-                "failed to publish closure events for run %s", run_id, exc_info=True
+                "failed to publish run.ended for reaped run %s", run_id, exc_info=True
             )
     if ids:
         logger.info("reaped %d stale runs", len(ids))

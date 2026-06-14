@@ -36,11 +36,11 @@ async def request_cancel(db: AsyncSession, run_id: UUID) -> bool:
     concurrently can never be stamped: returns False (and notifies nothing)
     when the run was already terminal.
 
-    Accepted gap: nothing re-reads the column today, so a NOTIFY that fires
-    while the owning process's control listener is mid-reconnect is lost —
-    recovery is the user cancelling again (a second request re-stamps and
-    re-notifies). The agent-worker milestone consumes the column properly
-    (claimed runs poll it), which closes the window."""
+    Accepted gap (now closed): a NOTIFY that fires while the owning process's
+    control listener is mid-reconnect is lost, but `beat()` in
+    `rehketo/runs/heartbeat.py` re-reads `cancel_requested_at` every heartbeat
+    interval as a backstop — so a missed NOTIFY is caught within one heartbeat
+    cycle. A second cancel request is no longer required for recovery."""
     result = cast(
         "CursorResult[tuple[()]]",
         await db.execute(

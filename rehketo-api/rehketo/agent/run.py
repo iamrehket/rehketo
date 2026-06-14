@@ -194,7 +194,7 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                     .where(Run.id == run_id)
                     .values(
                         status="running",
-                        started_at=datetime.now(UTC),
+                        started_at=func.coalesce(Run.started_at, datetime.now(UTC)),
                     )
                 )
                 await db.commit()
