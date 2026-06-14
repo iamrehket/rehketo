@@ -108,9 +108,18 @@ async def _supervise(
 
 
 async def _heartbeat(run_id: UUID, run_task: asyncio.Task[None]) -> None:
+    """Stamp heartbeat_at on a fixed cadence (the reaper's liveness signal) and
+    poll cancel_requested_at as a backstop for a control NOTIFY lost during a
+    listener reconnect. Cancels run_task if a cancel is pending. Survives
+    transient DB errors so a blip doesn't stop the heartbeat and get the run
+    false-reaped; runs until cancelled by _supervise's finally."""
     while True:
         await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
-        cancel_requested = await beat(run_id)
+        try:
+            cancel_requested = await beat(run_id)
+        except Exception:
+            logger.exception("heartbeat failed for run %s", run_id)
+            continue
         if cancel_requested:
             run_task.cancel()
             return
@@ -129,4 +138,6 @@ async def _finalize_precancelled(run_id: UUID, bus: RunEventBus) -> None:
         await db.commit()
     with contextlib.suppress(Exception):
         await bus.publish(str(run_id), {"type": "run.status", "status": "cancelled"})
+    # Guaranteed terminator — isolated so a failed status publish can't strand it.
+    with contextlib.suppress(Exception):
         await bus.publish(str(run_id), {"type": "run.ended"})
