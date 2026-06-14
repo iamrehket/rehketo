@@ -139,7 +139,26 @@ def _assistant_rows(
 async def _rehydrate_segments(
     db: AsyncSession, run_id: UUID, segments: SegmentTracker
 ) -> None:
-    return  # filled in Task 9
+    """Rebuild streaming-segment state from the durable delta journal so a run
+    resumed after an approval release persists its pre-release narration too."""
+    rows = (
+        (
+            await db.execute(
+                select(RunEvent.payload)
+                .where(
+                    RunEvent.run_id == run_id,
+                    RunEvent.payload["type"].astext == "message.delta",
+                )
+                .order_by(RunEvent.sequence)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for payload in rows:
+        raw_id = payload.get("message_id")
+        message_id = str(raw_id) if raw_id is not None else None
+        segments.add_delta(message_id, str(payload.get("delta", "")))
 
 
 async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR0912,PLR0915  # orchestrator: resume loop + three terminal branches is the simplest correct shape

@@ -204,9 +204,8 @@ async def test_approve_releases_then_resumes_on_reclaim(
                 {"r": str(run_id)},
             )
         ).one()
-    # Pre-approval narration survives via rehydration (Task 9). For now assert
-    # at least the resume text is present; Task 9 tightens this to "calling…done".
-    assert "done" in msg.content["text"]
+    # Pre-approval narration survives via rehydration (Task 9).
+    assert msg.content["text"] == "calling…done"
 
 
 async def test_deny_maps_to_reject(settings_env, db_url, db, monkeypatch) -> None:
