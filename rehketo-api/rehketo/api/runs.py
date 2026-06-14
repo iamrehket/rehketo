@@ -7,7 +7,7 @@ from uuid import UUID  # noqa: TC003  # used at runtime in Pydantic model + rout
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002  # FastAPI needs runtime type for Depends()
 )
@@ -17,6 +17,7 @@ from rehketo.db import get_session
 from rehketo.db.models import Run, RunEvent
 from rehketo.permissions.dependencies import ResolvedPermissions, resolve_permissions
 from rehketo.runs.cancellation import TERMINAL_RUN_STATES, request_cancel
+from rehketo.runs.claim import notify_run_queued
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -188,9 +189,8 @@ async def decide_approval(
     if "tool.approval_decision" in types:
         raise HTTPException(status_code=409, detail="approval already decided")
     # Check-then-publish is not atomic: two racing POSTs can both pass the
-    # duplicate guard and journal two decision events. Safe today because
-    # wait_for_decisions takes the first per id and drops the rest; revisit
-    # at the M4 worker split.
+    # duplicate guard and journal two decision events. Harmless — build_resume_command
+    # (approval.py) reads the first decision per approval_id and drops the rest.
     await request.app.state.event_bus.publish(
         str(run_id),
         {
@@ -199,3 +199,13 @@ async def decide_approval(
             "decision": payload.decision,
         },
     )
+    # Re-queue so a worker re-claims and resumes from the checkpoint. The
+    # decision is already durable in run_events; status is the claim trigger.
+    await db.execute(
+        text(
+            "UPDATE runs SET status='queued' WHERE id=:r AND status='pending_approval'"
+        ),
+        {"r": str(run_id)},
+    )
+    await notify_run_queued(db, run_id)
+    await db.commit()

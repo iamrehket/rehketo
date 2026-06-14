@@ -10,6 +10,7 @@ from sqlalchemy import text, update
 
 from rehketo.core.logging import get_logger
 from rehketo.db.models import Run
+from rehketo.runs.claim import RUN_QUEUED_CHANNEL
 from rehketo.runs.listen import listen
 
 if TYPE_CHECKING:
@@ -51,6 +52,20 @@ async def request_cancel(db: AsyncSession, run_id: UUID) -> bool:
     if (result.rowcount or 0) == 0:
         await db.rollback()
         return False
+    # A parked run (pending_approval) has no task to cancel via the control
+    # channel — route it through the claim instead: make it claimable so the
+    # worker finalizes it cancelled at the claim head. No-op for a running run
+    # (guarded on status), which is cancelled via its owner's control listener.
+    await db.execute(
+        text(
+            "UPDATE runs SET status='queued' WHERE id=:r AND status='pending_approval'"
+        ),
+        {"r": str(run_id)},
+    )
+    await db.execute(
+        text("SELECT pg_notify(:chan, :rid)"),
+        {"chan": RUN_QUEUED_CHANNEL, "rid": str(run_id)},
+    )
     await db.execute(
         text("SELECT pg_notify(:chan, :rid)"),
         {"chan": CONTROL_CHANNEL, "rid": str(run_id)},

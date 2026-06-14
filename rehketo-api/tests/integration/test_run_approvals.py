@@ -183,3 +183,22 @@ async def test_invalid_decision_value_422(settings_env, db_url, db) -> None:
             **_auth(sid, csrf),
         )
     assert r.status_code == 422
+
+
+async def test_decision_requeues_run_for_resume(settings_env, db_url, db) -> None:
+    sid, csrf, run_id, approval_id = await _seed_pending_run(db)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            f"/runs/{run_id}/approvals/{approval_id}",
+            json={"decision": "approve"},
+            **_auth(sid, csrf),
+        )
+    assert r.status_code == 204
+    async with sessionmaker()() as s:
+        row = (
+            await s.execute(
+                text("SELECT status FROM runs WHERE id = :rid"), {"rid": run_id}
+            )
+        ).one()
+    assert row.status == "queued"
