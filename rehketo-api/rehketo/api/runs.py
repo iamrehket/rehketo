@@ -201,6 +201,11 @@ async def decide_approval(
     )
     # Re-queue so a worker re-claims and resumes from the checkpoint. The
     # decision is already durable in run_events; status is the claim trigger.
+    # Known window: the decision event committed in its own (bus) transaction
+    # above; if THIS commit fails the run stays pending_approval with a decision
+    # journaled, and a re-POST hits the 409 guard. Not auto-recovered (the
+    # reaper only fails 'running' rows). Low probability; hardening to an atomic
+    # journal+flip is tracked for the deploy milestone.
     await db.execute(
         text(
             "UPDATE runs SET status='queued' WHERE id=:r AND status='pending_approval'"
