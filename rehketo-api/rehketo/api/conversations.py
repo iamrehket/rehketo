@@ -102,10 +102,10 @@ class ConversationDetail(ConversationSummary):
     items: list[TranscriptItem]
     # In-flight run for this conversation (queued/running/pending_approval),
     # newest first. The UI uses this to reattach to the live SSE stream on open.
-    # Best-effort: a run abandoned by a process crash stays
-    # queued/running/pending_approval until the next startup sweep, so this can
-    # briefly point at a dead run — the subscriber then just waits and the
-    # sweep's closure events end it.
+    # Best-effort: a run abandoned by a process crash stays running until the
+    # reaper detects the stale heartbeat and fails it, so this can briefly point
+    # at a dead run — the subscriber then just waits and the reaper's closure
+    # events end it. Queued/pending_approval runs are simply claimed by a worker.
     active_run_id: UUID | None = None
 
 
@@ -130,8 +130,8 @@ async def _tool_items(db: AsyncSession, conversation_id: UUID) -> list[ToolCallI
 
     Growth note: the query filters every run_event row of the conversation
     through an unindexed JSONB type check; fine at present scale — when it
-    bites, a partial index on tool event types or delta pruning in the startup
-    sweep is the remedy.
+    bites, a partial index on tool event types or delta pruning in a future
+    cleanup pass is the remedy.
     """
     rows = (
         await db.execute(

@@ -28,7 +28,8 @@ async def request_cancel(db: AsyncSession, run_id: UUID) -> bool:
     """Record the cancel durably, then ring the doorbell. The column is the
     source of truth; NOTIFY is the optimization — same pattern as the event
     bus. Whichever process holds the run's task reacts; if none does, the
-    run already died and the startup sweep closes it (as failed).
+    run's worker died and the reaper closes it (as failed) once it detects
+    the stale heartbeat.
 
     The terminal guard lives in the UPDATE itself so a run finishing
     concurrently can never be stamped: returns False (and notifies nothing)

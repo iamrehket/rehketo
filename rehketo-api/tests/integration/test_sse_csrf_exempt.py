@@ -103,3 +103,4 @@ async def test_sse_subscribe_does_not_require_csrf(
                     events.append(json.loads(line[6:]))
                     if events[-1].get("type") == "run.ended":
                         break
+        assert any(e.get("type") == "run.ended" for e in events)

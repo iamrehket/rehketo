@@ -396,7 +396,7 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
         # Single, guaranteed terminator. Suppress publish failures so a broken
         # bus cannot mask the real exception. If this publish fails the DB is
         # down — the run's own state writes have already failed the same way —
-        # and any still-attached subscriber will be closed out by the startup
-        # sweep's terminal events after the next restart.
+        # and any still-attached subscriber will be closed out by the reaper's
+        # terminal events once it detects the stale heartbeat.
         with contextlib.suppress(Exception):
             await bus.publish(str(run_id), {"type": "run.ended"})
