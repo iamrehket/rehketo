@@ -19,10 +19,11 @@ Edit here, never there.
 ## What it is
 
 Rehketo is a minimal, self-hostable agent harness: a chat UI (`rehketo-ui`, SvelteKit)
-and an API (`rehketo-api`, FastAPI) for talking to LLMs. The API runs agent "runs"
-(deepagents + LangGraph) and streams them to the UI over SSE. Auth is cookie-session
-based (Entra OIDC, Pattern B). In production the built UI is served *inside* the API
-via `StaticFiles` — they ship together.
+and an API (`rehketo-api`, FastAPI) for talking to LLMs. Agent runs (deepagents +
+LangGraph) execute in a dedicated worker process that claims them from a postgres-backed
+queue; the API enqueues runs and streams their events to the UI over SSE. Auth is
+cookie-session based (Entra OIDC, Pattern B). In production the built UI is served
+*inside* the API via `StaticFiles` — they ship together.
 
 ## What it is for
 
@@ -107,9 +108,11 @@ pnpm run test:unit -- --run
 - `rehketo-ui/` — SvelteKit frontend. See `rehketo-ui/AGENTS.md`.
 - `tools/` — repo guardrails (`agent_guards.py`), mirror generator
   (`sync_agent_rules.py`), contract check (`check_contract.py`), and their tests.
-- `justfile` — local launch recipes (`just db`, `just api`, `just ui`,
-  `just db-down`). One recipe per process; run each in its own terminal in the
-  order the API README documents.
+- `justfile` — local launch recipes (`just db`, `just api`, `just worker`,
+  `just ui`, `just db-down`), plus `just dev` to run api + worker together in
+  one terminal. Each process recipe runs in the foreground; in prod, `api` and
+  `worker` run as separate services. Run `db` first, then `api`/`worker` (or
+  `dev`) and `ui`, each as the API README documents.
 - `docs/superpowers/{specs,plans}/` — design specs and implementation plans.
 - `AGENTS.md` + mirrors — this file and its generated copies.
 
