@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 from typing import TYPE_CHECKING
 from uuid import UUID  # noqa: TC003  # returned at runtime
@@ -44,12 +43,16 @@ async def reap_stale_runs(
         ids = [row.id for row in result.all()]
         await db.commit()
     for run_id in ids:
-        with contextlib.suppress(Exception):
+        try:
             await bus.publish(
                 str(run_id),
                 {"type": "run.status", "status": "failed", "error": error},
             )
             await bus.publish(str(run_id), {"type": "run.ended"})
+        except Exception:
+            logger.warning(
+                "failed to publish closure events for run %s", run_id, exc_info=True
+            )
     if ids:
         logger.info("reaped %d stale runs", len(ids))
     return ids
