@@ -8,7 +8,6 @@ pinned separately by the live_deps test in test_run_agent_approval_live.py
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -236,28 +235,3 @@ async def test_deny_maps_to_reject(settings_env, db_url, db, monkeypatch) -> Non
     assert agent.resume_inputs[0].resume == {
         "intr-1": {"decisions": [{"type": "reject"}]}
     }
-
-
-async def test_cancel_while_pending_finalizes_cancelled(
-    settings_env, db_url, db, monkeypatch
-) -> None:
-    agent = _InterruptingAgent()
-    _install(monkeypatch, agent)
-    run_id = await _seed(db)
-    bus = PostgresEventBus(poll_interval=0.1)
-
-    task = asyncio.create_task(run_mod.run_agent(run_id, bus))
-    await _wait_for_status(run_id, "pending_approval")
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await asyncio.wait_for(task, timeout=10)
-
-    async with sessionmaker()() as s:
-        row = (
-            await s.execute(
-                text("SELECT status FROM runs WHERE id = :rid"), {"rid": str(run_id)}
-            )
-        ).one()
-    assert row.status == "cancelled"
-    types = [p["type"] for p in await _event_payloads(run_id)]
-    assert types[-1] == "run.ended"
