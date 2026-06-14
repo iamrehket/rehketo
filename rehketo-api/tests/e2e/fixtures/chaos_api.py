@@ -12,6 +12,12 @@ gets its own database inside the same testcontainer.
 The chaos-control server is a stdlib HTTP server on its own port so the
 Playwright spec (a separate process, driving a browser) can trigger
 ``POST /kill`` and ``POST /restart`` mid-test.
+
+The worker subprocess is persistent: it survives ``POST /kill`` and
+``POST /restart`` (which only affect the API process). The worker owns run
+execution — killing the API does not stop the run; the worker finishes it
+and writes events to the durable ``run_events`` table. The restarted API
+reconnects to the completed run via the durable bus.
 """
 
 from __future__ import annotations
@@ -125,9 +131,13 @@ def chaos_api(
         ),
     }
     log_path = tmp_path / "chaos-api.log"
+    worker_log_path = tmp_path / "chaos-worker.log"
     healthz = f"http://127.0.0.1:{port}/healthz"
 
-    with log_path.open("w", encoding="utf-8") as log:
+    with (
+        log_path.open("w", encoding="utf-8") as log,
+        worker_log_path.open("w", encoding="utf-8") as worker_log,
+    ):
 
         def spawn() -> subprocess.Popen[bytes]:
             return subprocess.Popen(  # noqa: S603 -- fixed argv, test infra
@@ -161,6 +171,20 @@ def chaos_api(
                 + log_path.read_text(encoding="utf-8")[-2000:]
             )
 
+        # Spawn a persistent worker alongside the killable API. The worker is
+        # NOT killed by /kill or /restart — only the API subprocess is. The
+        # worker owns run execution: killing the API does not stop the run;
+        # the worker finishes it and writes events to the durable run_events
+        # table. The restarted API reconnects to the completed run via the
+        # durable bus.
+        worker_proc = subprocess.Popen(
+            [sys.executable, "-m", "rehketo.cli.worker"],
+            cwd=API_ROOT,
+            env=env,
+            stdout=worker_log,
+            stderr=worker_log,
+        )
+
         # The handler swaps in the restarted process through this box.
         procs = {"current": proc}
         # Serializes kill/spawn in handler threads vs teardown: a daemonic
@@ -172,9 +196,10 @@ def chaos_api(
             def do_POST(self) -> None:
                 if self.path == "/kill":
                     with proc_lock:
-                        # SIGKILL = real crash: no lifespan shutdown, so the
-                        # run stays `running` in the DB and the restart's
-                        # startup sweep has an orphan to fail.
+                        # SIGKILL the API only — the worker survives and
+                        # continues executing the run. The run will be written
+                        # to run_events and the restarted API will reconnect
+                        # to it via the durable bus.
                         procs["current"].kill()
                         procs["current"].wait(timeout=10)
                 elif self.path == "/restart":
@@ -188,8 +213,7 @@ def chaos_api(
                         try:
                             procs["current"] = spawn()
                             # Reply only once healthz is green — uvicorn
-                            # serves only after lifespan startup, so the
-                            # startup sweep has run by then.
+                            # serves only after lifespan startup completes.
                             _wait_http_200(healthz, timeout_s=60.0)
                         except Exception as exc:
                             # Capture the subprocess log so a never-healthy
@@ -240,6 +264,13 @@ def chaos_api(
             # stops the serve_forever loop and leaves the socket open until GC.
             control.server_close()
             control_thread.join(timeout=10)
+            # Tear down the worker before the API so it can drain cleanly.
+            worker_proc.terminate()
+            try:
+                worker_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                worker_proc.kill()
+                worker_proc.wait()
             with proc_lock:
                 procs["current"].kill()
                 procs["current"].wait(timeout=10)
