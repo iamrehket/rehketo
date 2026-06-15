@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 from uuid import UUID, uuid4
 
-import respx
-from httpx import ASGITransport, AsyncClient, Response
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from rehketo.auth.cookies import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
@@ -14,15 +12,9 @@ from rehketo.db.models import Conversation, Message, Run, User, UserRole
 from rehketo.main import create_app
 
 
-@respx.mock
 async def test_posting_a_message_creates_row_and_kicks_off_run(
     settings_env, db_url, db
 ) -> None:
-    # Mock Bifrost so the agent request resolves immediately with an empty stream
-    respx.post("http://bifrost-mock/v1/responses").mock(
-        return_value=Response(200, json={"output": [{"content": [{"text": "hi"}]}]})
-    )
-
     u = User(id=uuid4(), display_name="A", email="a@x")
     db.add(u)
     await db.flush()
@@ -51,10 +43,7 @@ async def test_posting_a_message_creates_row_and_kicks_off_run(
     assert UUID(body["message_id"])
     assert UUID(body["run_id"])
 
-    # Give the background task a moment to transition the run
-    await asyncio.sleep(0.2)
-
-    # User message was persisted
+    # User message persisted
     msgs = (
         (await db.execute(select(Message).where(Message.conversation_id == conv.id)))
         .scalars()
@@ -62,11 +51,12 @@ async def test_posting_a_message_creates_row_and_kicks_off_run(
     )
     assert any(m.role == "user" and m.content.get("text") == "hello" for m in msgs)
 
-    # Run row exists
+    # Run row exists and is left queued for a worker to claim — the API no
+    # longer executes runs in-process.
     runs = (
         (await db.execute(select(Run).where(Run.conversation_id == conv.id)))
         .scalars()
         .all()
     )
     assert len(runs) == 1
-    assert runs[0].status in ("queued", "running", "succeeded", "failed")
+    assert runs[0].status == "queued"

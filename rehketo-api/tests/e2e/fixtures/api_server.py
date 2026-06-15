@@ -12,13 +12,20 @@ The fixture:
   inside pytest-asyncio's loop because the api uses lifespan="on" (which
   pytest-asyncio's loop fights about) and a real port is required so
   Playwright can hit it.
+- Spawns a worker subprocess (python -m rehketo.cli.worker) that claims
+  and executes queued runs. A subprocess is used (not a thread) to avoid
+  "attached to a different loop" errors from the shared SQLAlchemy async
+  engine singleton.
 """
 
 from __future__ import annotations
 
 import base64
+import os
 import pathlib
 import secrets
+import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -111,6 +118,7 @@ def api_server(
     _pg: PostgresContainer,
     fake_bifrost: BifrostHandle,
     ui_build: pathlib.Path,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[ApiHandle]:
     from alembic.config import Config
 
@@ -153,10 +161,47 @@ def api_server(
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True, name="api-server")
     thread.start()
+
+    worker_proc: subprocess.Popen[bytes] | None = None
+    tmp_dir = tmp_path_factory.mktemp("api_server")
+    worker_log_path = tmp_dir / "worker.log"
+
     try:
         _wait_http_200(f"http://127.0.0.1:{port}/healthz")
+
+        # Spawn the agent worker so queued runs get claimed and executed.
+        # A subprocess (not a thread) avoids "attached to a different loop"
+        # errors from the shared SQLAlchemy async engine singleton.
+        with worker_log_path.open("w", encoding="utf-8") as worker_log:
+            worker_proc = subprocess.Popen(
+                [sys.executable, "-m", "rehketo.cli.worker"],
+                cwd=API_ROOT,
+                env={**os.environ, **env},
+                stdout=worker_log,
+                stderr=worker_log,
+            )
+
+        # Give the worker a moment to start its claim loop, then verify it
+        # didn't exit immediately (e.g. import error or bad config).
+        time.sleep(1.0)
+        if worker_proc.poll() is not None:
+            log_tail = worker_log_path.read_text(encoding="utf-8")[-2000:]
+            rc = worker_proc.returncode
+            pytest.fail(
+                f"agent worker subprocess exited immediately (rc={rc});"
+                f" log tail:\n{log_tail}"
+            )
+
         yield ApiHandle(port=port, base_url=f"http://127.0.0.1:{port}")
     finally:
+        # Terminate the worker before the API so it can drain cleanly.
+        if worker_proc is not None:
+            worker_proc.terminate()
+            try:
+                worker_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                worker_proc.kill()
+                worker_proc.wait()
         server.should_exit = True
         thread.join(timeout=10)
         get_settings.cache_clear()

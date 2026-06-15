@@ -22,11 +22,11 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002  # fixture annotation
 
 from rehketo.auth.cookies import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
-from rehketo.main import create_app
 from rehketo.runs.registry import reset_registry_for_tests
 from tests.integration._helpers import (
     FakeStreamingAgent,
     await_run_terminal,
+    live_app,
     make_fake_build_agent,
     seed_user_and_conv,
 )
@@ -64,8 +64,10 @@ async def test_messages_returned_in_insertion_order(
     cookies = {SESSION_COOKIE: str(sid), CSRF_COOKIE: csrf}
     headers = {CSRF_HEADER: csrf}
 
-    app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+    async with (
+        live_app() as app,
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c,
+    ):
         for body in ("first", "second", "third"):
             r = await c.post(
                 f"/conversations/{conv.id}/messages",

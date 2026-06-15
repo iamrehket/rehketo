@@ -1,113 +1,137 @@
-"""Pause/resume plumbing for per-call tool approval (M3.5).
+"""Pause/resume plumbing for per-call tool approval.
 
-The HITL middleware interrupts the graph BEFORE an untrusted tool executes;
-run_agent calls resolve_interrupt after each astream stint. The decision
-travels as a durable `tool.approval_decision` event on the existing bus
-(published by POST /runs/{id}/approvals/{approval_id}), so it is journaled
-for transcript reload and audit, and the transport is multi-process-correct
-the same way the bus already is.
-"""
+The HITL middleware interrupts the graph BEFORE an untrusted tool executes.
+On the first encounter the worker publishes one durable tool.approval_required
+per call (carrying the interrupt id for correlation), parks the run at
+pending_approval, and releases its slot. When the decision arrives the run is
+re-queued; on re-claim build_resume_command reconstructs the resume Command
+from the journaled approval_required + approval_decision events. Decisions are
+the durable source of truth, so resume is correct across processes."""
 
 from __future__ import annotations
 
-import contextlib
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from langgraph.types import Command
-from sqlalchemy import update
+from sqlalchemy import text
 
 from rehketo.db import sessionmaker
-from rehketo.db.models import Run
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Sequence
     from uuid import UUID
 
     from rehketo.runs.event_bus import RunEventBus
 
 
-async def resolve_interrupt(
-    agent: Any, config: dict[str, Any], *, run_id: UUID, bus: RunEventBus
-) -> Command[Any] | None:
-    """Return a resume Command if the graph paused on tool approval, else None.
-
-    Blocks (cancellably) until the user decides every call in the batch —
-    the middleware interrupts once per model turn with ALL calls needing
-    review, and the graph can only resume whole.
-    """
-    state = await agent.aget_state(config)
+def _interrupt(state: Any) -> Any | None:
     interrupts = [i for task in state.tasks for i in task.interrupts]
-    if not interrupts:
-        return None
-    intr = interrupts[0]
-    requests = intr.value["action_requests"]
-    approval_ids = [str(uuid4()) for _ in requests]
-    for approval_id, request in zip(approval_ids, requests, strict=True):
-        await bus.publish(
-            str(run_id),
-            {
-                "type": "tool.approval_required",
-                "approval_id": approval_id,
-                "tool": request["name"],
-                "arguments": request["args"],
-            },
-        )
+    return interrupts[0] if interrupts else None
+
+
+async def park_on_interrupt(
+    agent: Any, config: dict[str, Any], *, run_id: UUID, bus: RunEventBus
+) -> bool:
+    """If the graph paused on approval, publish one approval_required per call,
+    set pending_approval, and return True (the caller releases the run). Return
+    False if there is no interrupt (the turn finished). Idempotent against a
+    re-encounter: if approval_required already exists for this interrupt id we
+    do not re-publish."""
+    state = await agent.aget_state(config)
+    intr = _interrupt(state)
+    if intr is None:
+        return False
+    if not await _required_ids(run_id, intr.id):
+        requests = intr.value["action_requests"]
+        for request in requests:
+            await bus.publish(
+                str(run_id),
+                {
+                    "type": "tool.approval_required",
+                    "approval_id": str(uuid4()),
+                    "interrupt_id": intr.id,
+                    "tool": request["name"],
+                    "arguments": request["args"],
+                },
+            )
     await _set_status(run_id, "pending_approval", bus)
-    decisions = await wait_for_decisions(bus, str(run_id), approval_ids)
-    await _set_status(run_id, "running", bus)
-    # Wire vocabulary is approve/deny; the middleware's is approve/reject.
-    # Reject without a message makes the middleware tell the model the tool
-    # was not executed and not to retry — the spec's deny semantics.
-    intr_id = intr.id
+    return True
+
+
+async def build_resume_command(
+    agent: Any, config: dict[str, Any], *, run_id: UUID
+) -> Command[Any] | None:
+    """On re-claim, reconstruct the resume Command from durable events. Returns
+    None if the checkpoint no longer holds an interrupt (already resumed). Pure
+    read: it does NOT publish run.status=running — run_agent's start block
+    already did when the re-claimed run flipped to running, so the resume emits
+    exactly one running event."""
+    state = await agent.aget_state(config)
+    intr = _interrupt(state)
+    if intr is None:
+        return None
+    ids = await _required_ids(run_id, intr.id)  # publish order == request order
+    decisions = await _decisions_for(run_id, ids)
+    # Wire vocabulary approve/deny -> middleware approve/reject. A bare reject
+    # tells the model the tool was not executed and not to retry (deny).
     return Command(
         resume={
-            intr_id: {
+            intr.id: {
                 "decisions": [
                     {"type": "approve"}
-                    if decisions[approval_id] == "approve"
+                    if decisions.get(approval_id) == "approve"
                     else {"type": "reject"}
-                    for approval_id in approval_ids
+                    for approval_id in ids
                 ]
             }
         }
     )
 
 
-async def wait_for_decisions(
-    bus: RunEventBus, run_id: str, approval_ids: Sequence[str]
-) -> dict[str, str]:
-    """Collect tool.approval_decision events until the batch is resolved.
+async def _required_ids(run_id: UUID, interrupt_id: str) -> list[str]:
+    async with sessionmaker()() as db:
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT payload->>'approval_id' AS aid FROM run_events "
+                    "WHERE run_id=:r AND payload->>'type'='tool.approval_required' "
+                    "AND payload->>'interrupt_id'=:i ORDER BY sequence"
+                ),
+                {"r": str(run_id), "i": interrupt_id},
+            )
+        ).all()
+    return [row.aid for row in rows]
 
-    Subscribes from sequence 0: approval ids are fresh UUIDs, so replayed
-    history can never false-match, and replay-from-start needs no
-    "current sequence" bookkeeping. First decision per id wins.
-    """
-    pending = set(approval_ids)
-    decisions: dict[str, str] = {}
-    stream = cast("AsyncGenerator[dict[str, object]]", bus.subscribe(run_id))
-    async with contextlib.aclosing(stream) as events:
-        async for event in events:
-            if event.get("type") != "tool.approval_decision":
-                continue
-            approval_id = str(event.get("approval_id", ""))
-            if approval_id not in pending:
-                continue
-            decisions[approval_id] = str(event["decision"])
-            pending.discard(approval_id)
-            if not pending:
-                return decisions
-    # subscribe() never returns normally; it only ends via CancelledError,
-    # which propagates past this function rather than reaching these lines.
-    msg = "event stream ended before approvals resolved"  # pragma: no cover  # ↑
-    raise RuntimeError(msg)  # pragma: no cover  # unreachable
+
+async def _decisions_for(run_id: UUID, approval_ids: list[str]) -> dict[str, str]:
+    if not approval_ids:
+        return {}
+    async with sessionmaker()() as db:
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT payload->>'approval_id' AS aid, "
+                    "payload->>'decision' AS dec FROM run_events "
+                    "WHERE run_id=:r AND payload->>'type'='tool.approval_decision' "
+                    "AND payload->>'approval_id' = ANY(:ids) ORDER BY sequence"
+                ),
+                {"r": str(run_id), "ids": approval_ids},
+            )
+        ).all()
+    # First decision per id wins.
+    out: dict[str, str] = {}
+    for row in rows:
+        out.setdefault(row.aid, row.dec)
+    return out
 
 
 async def _set_status(run_id: UUID, status: str, bus: RunEventBus) -> None:
     async with sessionmaker()() as db:
-        # Unconditional write is safe only because ALL of a run's status
-        # writes happen in this one task today (same invariant the event
-        # bus documents for its publish locks). Revisit at the M4 split.
-        await db.execute(update(Run).where(Run.id == run_id).values(status=status))
+        # Safe under multi-worker: a parked run has exactly one claimer at a
+        # time — the SKIP LOCKED claim is the mutex.
+        await db.execute(
+            text("UPDATE runs SET status=:s WHERE id=:r"),
+            {"s": status, "r": str(run_id)},
+        )
         await db.commit()
     await bus.publish(str(run_id), {"type": "run.status", "status": status})

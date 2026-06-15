@@ -1,7 +1,8 @@
-// Durable-bus crash recovery: SIGKILL the api mid-stream (no lifespan
-// shutdown — the run stays `running` in the DB), watch SSE retries exhaust
-// into the disconnected banner, restart the api (startup sweep fails the
-// orphaned run), and reload to a clean, usable conversation.
+// Durable-bus crash recovery: SIGKILL the api mid-stream; the worker survives
+// and finishes the run, writing events to the durable run_events table. The
+// restarted API reconnects to the completed run via the durable bus. The UI
+// resumes the stream (durable bus + resume-by-sequence) and the conversation
+// reloads cleanly showing the full assistant reply.
 //
 import { test, expect, assistantBubble, userBubble, setBifrostProfile } from './fixtures/auth';
 
@@ -15,7 +16,7 @@ test.skip(
 
 const CHAOS_URL = process.env.REHKETO_CHAOS_URL ?? '';
 
-test('kill mid-stream → banner; restart → sweep fails run; reload is clean', async ({
+test('kill mid-stream → banner; worker finishes run; restart reconnects; reload shows reply', async ({
 	page,
 	context,
 	loggedInRequest
@@ -33,7 +34,7 @@ test('kill mid-stream → banner; restart → sweep fails run; reload is clean',
 	await expect(page).toHaveURL(/\/c\//);
 	const conversationUrl = page.url();
 
-	// Capture the run id from the kickoff response — the sweep verdict is
+	// Capture the run id from the kickoff response — the worker's verdict is
 	// asserted via GET /runs/{id} after restart.
 	const kickoffPromise = page.waitForResponse(
 		(r) => r.url().includes('/messages') && r.request().method() === 'POST'
@@ -53,24 +54,32 @@ test('kill mid-stream → banner; restart → sweep fails run; reload is clean',
 	// then the banner renders. Generous timeout for slow CI.
 	await expect(page.getByRole('alert')).toContainText(/disconnected/i, { timeout: 20_000 });
 
-	// /restart replies only after healthz is green — the startup sweep runs
-	// in lifespan before the app serves, so it has completed by then. The
-	// cold langchain re-import can take a while: widen the request timeout.
+	// /restart replies only after healthz is green — the cold langchain
+	// re-import can take a while: widen the request timeout.
 	const restart = await context.request.post(`${CHAOS_URL}/restart`, { timeout: 70_000 });
 	expect(restart.ok(), 'chaos /restart failed').toBe(true);
 
-	// Sweep verdict. context.request shares the browser's session cookie and
-	// resolves relative URLs against baseURL (REHKETO_BASE_URL).
-	const runResp = await context.request.get(`/runs/${runId}`);
-	expect(runResp.ok(), `GET /runs/${runId} failed: ${await runResp.text()}`).toBe(true);
-	const run = (await runResp.json()) as { status: string };
-	expect(run.status).toBe('failed');
+	// Worker verdict: the worker finishes the run while the API is down and
+	// writes the final status to run_events. The restarted API reads it from
+	// the durable bus. The worker may still be draining right at restart, so
+	// poll until 'succeeded' rather than asserting once.
+	await expect
+		.poll(
+			async () => {
+				const runResp = await context.request.get(`/runs/${runId}`);
+				if (!runResp.ok()) return null;
+				const run = (await runResp.json()) as { status: string };
+				return run.status;
+			},
+			{ timeout: 20_000, intervals: [500, 1000, 2000] }
+		)
+		.toBe('succeeded');
 
-	// Clean reload: a SIGKILLed run leaves NO assistant message row — the
-	// sweep only flips runs.status. active_run_id is null for failed runs,
-	// so there's no reattach hang and the composer is live again.
+	// Clean reload: the worker persisted the assistant message rows while the
+	// API was down. The reloaded conversation shows the full reply and the
+	// composer is enabled (active_run_id is null for completed runs).
 	await page.goto(conversationUrl);
 	await expect(userBubble(page)).toContainText('stream then crash');
-	await expect(assistantBubble(page)).toHaveCount(0);
+	await expect(assistantBubble(page)).toContainText(/tok\d+/);
 	await expect(page.getByPlaceholder('Message Rehketo…')).toBeEnabled();
 });

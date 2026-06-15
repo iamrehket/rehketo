@@ -1,22 +1,21 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002  # FastAPI needs runtime type for Depends()
 )
 
-from rehketo.agent.run import run_agent
 from rehketo.config import get_settings
 from rehketo.db import get_session
 from rehketo.db.models import Conversation, Message, Run
 from rehketo.permissions.dependencies import ResolvedPermissions, resolve_permissions
+from rehketo.runs.claim import notify_run_queued
 
 router = APIRouter(prefix="/conversations", tags=["messages"])
 
@@ -38,7 +37,6 @@ class MessageKickoffOut(BaseModel):
 async def post_message(
     conversation_id: UUID,
     payload: MessageCreate,
-    request: Request,
     db: Annotated[AsyncSession, Depends(get_session)],
     perms: Annotated[ResolvedPermissions, Depends(resolve_permissions)],
 ) -> MessageKickoffOut:
@@ -80,11 +78,7 @@ async def post_message(
         )
     )
     conv.updated_at = datetime.now(UTC)
+    await notify_run_queued(db, run_id)
     await db.commit()
-
-    bus = request.app.state.event_bus
-    registry = request.app.state.task_registry
-    task = asyncio.create_task(run_agent(run_id, bus))
-    registry.register(run_id, task)
 
     return MessageKickoffOut(message_id=message_id, run_id=run_id)

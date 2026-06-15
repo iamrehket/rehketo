@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from sqlalchemy import func, select, update
 
-from rehketo.agent.approval import resolve_interrupt
+from rehketo.agent.approval import build_resume_command, park_on_interrupt
 from rehketo.agent.events import transform_chunk
 from rehketo.agent.graph import build_agent
 from rehketo.agent.prompt import assemble_system_prompt
@@ -136,6 +136,31 @@ def _assistant_rows(
     return rows
 
 
+async def _rehydrate_segments(
+    db: AsyncSession, run_id: UUID, segments: SegmentTracker
+) -> None:
+    """Rebuild streaming-segment state from the durable delta journal so a run
+    resumed after an approval release persists its pre-release narration too."""
+    rows = (
+        (
+            await db.execute(
+                select(RunEvent.payload)
+                .where(
+                    RunEvent.run_id == run_id,
+                    RunEvent.payload["type"].astext == "message.delta",
+                )
+                .order_by(RunEvent.sequence)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for payload in rows:
+        raw_id = payload.get("message_id")
+        message_id = str(raw_id) if raw_id is not None else None
+        segments.add_delta(message_id, str(payload.get("delta", "")))
+
+
 async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR0912,PLR0915  # orchestrator: resume loop + three terminal branches is the simplest correct shape
     """Drive the agent for `run_id`. Called as an asyncio.Task.
 
@@ -159,6 +184,7 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
         user_id: UUID = run.user_id
 
     segments = SegmentTracker()
+    parked = False
 
     try:
         try:
@@ -168,7 +194,7 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                     .where(Run.id == run_id)
                     .values(
                         status="running",
-                        started_at=datetime.now(UTC),
+                        started_at=func.coalesce(Run.started_at, datetime.now(UTC)),
                     )
                 )
                 await db.commit()
@@ -207,7 +233,22 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                     str(run_id), system_prompt, tools=tools, interrupt_on=interrupt_on
                 ):
                     config: Any = {"configurable": {"thread_id": str(run_id)}}
-                    stream_input: Any = {"messages": history}
+                    # A run with a pending interrupt in its checkpoint is a
+                    # resume: rebuild the decision-bearing Command from the
+                    # durable journal instead of restarting from history.
+                    resume_cmd = (
+                        await build_resume_command(agent, config, run_id=run_id)
+                        if interrupt_on
+                        else None
+                    )
+                    if resume_cmd is not None:
+                        # Replay prior deltas so persisted text spans the
+                        # approval boundary (Task 9 fills in _rehydrate_segments).
+                        async with sessionmaker()() as db:
+                            await _rehydrate_segments(db, run_id, segments)
+                    stream_input: Any = (
+                        resume_cmd if resume_cmd is not None else {"messages": history}
+                    )
                     while True:
                         async for chunk in agent.astream(
                             stream_input,
@@ -221,15 +262,15 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                                         event.get("message_id"), str(event["delta"])
                                     )
                         if not interrupt_on:
-                            # No HITL middleware installed — the graph cannot
-                            # interrupt, so skip the checkpoint read.
                             break
-                        resume = await resolve_interrupt(
+                        if await park_on_interrupt(
                             agent, config, run_id=run_id, bus=bus
-                        )
-                        if resume is None:
+                        ):
+                            parked = True
                             break
-                        stream_input = resume
+                        break
+                    if parked:
+                        return  # non-terminal: stay pending_approval, no run.ended
 
             # Persist one assistant row per AI turn and finalize the run.
             async with sessionmaker()() as db:
@@ -393,10 +434,9 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
             )
 
     finally:
-        # Single, guaranteed terminator. Suppress publish failures so a broken
-        # bus cannot mask the real exception. If this publish fails the DB is
-        # down — the run's own state writes have already failed the same way —
-        # and any still-attached subscriber will be closed out by the startup
-        # sweep's terminal events after the next restart.
+        # Single, guaranteed terminator — but only for terminal outcomes. A
+        # parked run returned early above and must keep its stream open for the
+        # resume.
         with contextlib.suppress(Exception):
-            await bus.publish(str(run_id), {"type": "run.ended"})
+            if not parked:
+                await bus.publish(str(run_id), {"type": "run.ended"})

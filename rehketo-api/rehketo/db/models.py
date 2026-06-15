@@ -196,6 +196,7 @@ class Run(Base):
         DateTime(timezone=True)
     )
     model: Mapped[str] = mapped_column(Text, nullable=False)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

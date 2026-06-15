@@ -25,6 +25,21 @@ api:
     @test -f .env || { echo "rehketo-api/.env missing — cp .env.example .env"; exit 1; }
     uv run python -m rehketo.cli.serve
 
+# Run the agent worker (foreground). Claims and executes queued runs.
+[working-directory("rehketo-api")]
+worker:
+    @test -f .env || { echo "rehketo-api/.env missing — cp .env.example .env"; exit 1; }
+    uv run python -m rehketo.cli.worker
+
+# Run api + worker together (dev convenience; prod runs them as separate services).
+dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    trap 'kill 0' EXIT
+    just api &
+    just worker &
+    wait
+
 # Run the SvelteKit UI on :5173 (foreground).
 [working-directory("rehketo-ui")]
 ui:

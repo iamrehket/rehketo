@@ -10,6 +10,7 @@ from sqlalchemy import text, update
 
 from rehketo.core.logging import get_logger
 from rehketo.db.models import Run
+from rehketo.runs.claim import RUN_QUEUED_CHANNEL
 from rehketo.runs.listen import listen
 
 if TYPE_CHECKING:
@@ -28,17 +29,18 @@ async def request_cancel(db: AsyncSession, run_id: UUID) -> bool:
     """Record the cancel durably, then ring the doorbell. The column is the
     source of truth; NOTIFY is the optimization — same pattern as the event
     bus. Whichever process holds the run's task reacts; if none does, the
-    run already died and the startup sweep closes it (as failed).
+    run's worker died and the reaper closes it (as failed) once it detects
+    the stale heartbeat.
 
     The terminal guard lives in the UPDATE itself so a run finishing
     concurrently can never be stamped: returns False (and notifies nothing)
     when the run was already terminal.
 
-    Accepted gap: nothing re-reads the column today, so a NOTIFY that fires
-    while the owning process's control listener is mid-reconnect is lost —
-    recovery is the user cancelling again (a second request re-stamps and
-    re-notifies). The agent-worker milestone consumes the column properly
-    (claimed runs poll it), which closes the window."""
+    Accepted gap (now closed): a NOTIFY that fires while the owning process's
+    control listener is mid-reconnect is lost, but `beat()` in
+    `rehketo/runs/heartbeat.py` re-reads `cancel_requested_at` every heartbeat
+    interval as a backstop — so a missed NOTIFY is caught within one heartbeat
+    cycle. A second cancel request is no longer required for recovery."""
     result = cast(
         "CursorResult[tuple[()]]",
         await db.execute(
@@ -50,6 +52,20 @@ async def request_cancel(db: AsyncSession, run_id: UUID) -> bool:
     if (result.rowcount or 0) == 0:
         await db.rollback()
         return False
+    # A parked run (pending_approval) has no task to cancel via the control
+    # channel — route it through the claim instead: make it claimable so the
+    # worker finalizes it cancelled at the claim head. No-op for a running run
+    # (guarded on status), which is cancelled via its owner's control listener.
+    await db.execute(
+        text(
+            "UPDATE runs SET status='queued' WHERE id=:r AND status='pending_approval'"
+        ),
+        {"r": str(run_id)},
+    )
+    await db.execute(
+        text("SELECT pg_notify(:chan, :rid)"),
+        {"chan": RUN_QUEUED_CHANNEL, "rid": str(run_id)},
+    )
     await db.execute(
         text("SELECT pg_notify(:chan, :rid)"),
         {"chan": CONTROL_CHANNEL, "rid": str(run_id)},

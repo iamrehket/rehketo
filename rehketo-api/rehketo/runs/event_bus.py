@@ -56,8 +56,7 @@ class PostgresEventBus:
             listen(EVENTS_CHANNEL, self._on_notify, ready=ready)
         )
         # Deliberately unbounded: startup blocks until postgres accepts LISTEN —
-        # the app is useless without the DB, and the sweep right after would
-        # fail anyway.
+        # the app/worker is useless without the DB.
         await ready.wait()
 
     async def stop(self) -> None:
