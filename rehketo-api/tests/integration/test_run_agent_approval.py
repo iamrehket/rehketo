@@ -111,6 +111,8 @@ def _install(monkeypatch, agent: _InterruptingAgent) -> None:
         system_prompt: str,
         tools: Sequence[Any] = (),
         interrupt_on: Any = None,
+        subagents: Any = None,
+        skill_sources: Any = None,
     ) -> AsyncIterator[_InterruptingAgent]:
         assert interrupt_on, "auto_approve=False server must produce interrupt config"
         yield agent

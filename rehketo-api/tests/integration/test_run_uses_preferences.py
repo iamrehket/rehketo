@@ -44,6 +44,8 @@ async def _fake_build_agent(
     system_prompt: str,
     tools: Sequence[Any] = (),
     interrupt_on: Any = None,
+    subagents: Any = None,
+    skill_sources: Any = None,
 ) -> AsyncIterator[_OkAgent]:
     captured["system_prompt"] = system_prompt
     yield _OkAgent()

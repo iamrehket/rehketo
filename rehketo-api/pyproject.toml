@@ -50,10 +50,11 @@ testpaths = ["tests"]
 # Skip slow/external tests by default. Opt in with:
 #   uv run pytest -m live_deps   # tests hitting real Bifrost / Anthropic
 #   uv run pytest -m e2e         # full offline browser tests (Playwright)
-addopts = "-m 'not live_deps and not e2e'"
+addopts = "-m 'not live_deps and not e2e and not eval'"
 markers = [
     "live_deps: tests that hit real external services (the checkpointer, Bifrost, Anthropic). Skipped unless you pass -m live_deps.",
     "e2e: full-stack offline browser tests driven by Playwright via the rehketo-api/tests/e2e/ pytest fixtures. Skipped unless you pass -m e2e.",
+    "eval: opt-in evaluations that require a live model",
 ]
 
 [tool.uv]

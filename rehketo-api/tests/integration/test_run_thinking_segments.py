@@ -82,6 +82,8 @@ async def test_two_turn_run_persists_thinking_and_answer_rows(
         system_prompt: str,
         tools: Sequence[Any] = (),
         interrupt_on: Any = None,
+        subagents: Any = None,
+        skill_sources: Any = None,
     ) -> AsyncIterator[_TwoTurnAgent]:
         yield _TwoTurnAgent(tools)
 
@@ -171,6 +173,8 @@ async def test_failed_run_persists_segments_under_same_rule(
         system_prompt: str,
         tools: Sequence[Any] = (),
         interrupt_on: Any = None,
+        subagents: Any = None,
+        skill_sources: Any = None,
     ) -> AsyncIterator[_FailingAgent]:
         yield _FailingAgent()
 

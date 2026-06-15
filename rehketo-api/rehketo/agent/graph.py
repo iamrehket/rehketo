@@ -27,14 +27,18 @@ async def build_agent(
     system_prompt: str,
     tools: Sequence[BaseTool] = (),
     interrupt_on: Mapping[str, InterruptOnConfig] | None = None,
+    subagents: Sequence[Mapping[str, object]] | None = None,
+    skill_sources: Sequence[str] | None = None,
 ) -> AsyncIterator[CompiledStateGraph]:  # type: ignore[type-arg]
     """Yield a deepagents graph bound to a postgres checkpointer.
 
     Scoped to thread_id=run_id. Tools and the per-tool approval config are
-    assembled by the caller (rehketo.mcp.registry) so graph construction
-    stays a pure function of its inputs. interrupt_on installs deepagents'
-    HumanInTheLoopMiddleware: listed tools pause the graph for approval
-    before executing; unlisted tools auto-approve.
+    assembled by the caller (rehketo.mcp.registry) so graph construction stays
+    a pure function of its inputs. interrupt_on installs deepagents'
+    HumanInTheLoopMiddleware. subagents (mcp-skills) and skill_sources
+    (doc-skills, via SkillsMiddleware) are the M4.5 discovery surface — see
+    rehketo.mcp.skills; deepagents adds the `task` delegation tool when
+    subagents are present and SkillsMiddleware when skills= is set.
     """
     dsn = _checkpointer_dsn()
     async with AsyncPostgresSaver.from_conn_string(dsn) as saver:
@@ -44,5 +48,7 @@ async def build_agent(
             model=build_chat_model(),
             checkpointer=saver,
             interrupt_on=dict(interrupt_on) if interrupt_on else None,
+            subagents=list(subagents) if subagents else None,  # type: ignore[arg-type]  # deepagents SubAgent union; caller supplies typed dicts
+            skills=list(skill_sources) if skill_sources else None,
         )
         yield agent

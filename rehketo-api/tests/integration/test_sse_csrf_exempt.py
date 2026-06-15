@@ -42,6 +42,8 @@ async def _fake_build_agent(
     system_prompt: str,
     tools: Sequence[Any] = (),
     interrupt_on: Any = None,
+    subagents: Any = None,
+    skill_sources: Any = None,
 ) -> AsyncIterator[_ImmediateAgent]:
     yield _ImmediateAgent()
 
