@@ -54,6 +54,7 @@ addopts = "-m 'not live_deps and not e2e'"
 markers = [
     "live_deps: tests that hit real external services (the checkpointer, Bifrost, Anthropic). Skipped unless you pass -m live_deps.",
     "e2e: full-stack offline browser tests driven by Playwright via the rehketo-api/tests/e2e/ pytest fixtures. Skipped unless you pass -m e2e.",
+    "eval: opt-in evaluations that require a live model",
 ]
 
 [tool.uv]
