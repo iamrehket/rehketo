@@ -45,10 +45,23 @@ discovery works the same regardless of backing.
   exist from the first migration. The authoring/association surface for
   user-scoped skills is a later slice — the column and rule are present so
   user skills need no schema change when built.
-- **Activation reveals; M3.5 approval still governs calling.** Activating a
-  skill makes its tools available; when an activated MCP tool actually fires,
-  it still flows through the existing `interrupt_on` / `auto_approve` gate.
-  The two concerns stay orthogonal.
+- **Build on deepagents' native primitives, not a hand-rolled meta-tool.**
+  deepagents already ships `SkillsMiddleware` (Anthropic-style skills with
+  progressive disclosure — name+description in the prompt, full `SKILL.md`
+  body read on demand) and `subagents=` (each `SubAgent` carries `name`,
+  `description`, scoped `tools`, and `interrupt_on`; the framework auto-adds
+  the delegation tool). These cover the doc-skill and MCP-skill cases
+  respectively. We do **not** build a custom `activate_skill` meta-tool —
+  doing so would re-invent two framework primitives and fight the framework
+  (charter rule 3). The earlier "Approach C vs. Approach A" question is
+  retired by this: deepagents provides the subagent-delegation path (C) and
+  native skill disclosure directly, so the custom dynamic-model-rebind (A) is
+  unnecessary.
+- **Discovery reveals; M3.5 approval still governs calling.** Surfacing a
+  skill card or delegating to a subagent makes its tools reachable; when an
+  MCP tool actually fires it still flows through the existing `interrupt_on` /
+  `auto_approve` gate, carried onto the `SubAgent` via its `interrupt_on`
+  field. The two concerns stay orthogonal.
 - **`trigger` lives on the skill row, not on `mcp_servers`.** `mcp_servers`
   stays about *connection*; `skills` owns *discovery* metadata. This keeps a
   single source of discovery truth once bundle skills arrive.
@@ -80,6 +93,26 @@ Integrity expectations (validated at the write boundary, not over-engineered):
 `kind='mcp'` requires `mcp_server_id` and leaves `instructions` null;
 `kind='doc'` requires `instructions` and leaves `mcp_server_id` null.
 
+## Framework alignment
+
+deepagents (the existing agent runtime) ships the two primitives this feature
+needs, so M4.5 wires our registry into them rather than re-implementing them:
+
+- **`SkillsMiddleware`** — loads skills (a `SKILL.md` per skill: YAML
+  frontmatter `name`/`description` + markdown body) from a pluggable
+  *backend* and injects metadata into the system prompt, with the full body
+  read on demand. This is progressive disclosure, native. The backend is a
+  virtual-filesystem protocol (`read`/`write`/`glob`/`ls`); `StateBackend`
+  stores those files in ephemeral agent state. The DB stays the source of
+  truth — at run start we *materialize* the resolved doc-skills into a
+  `StateBackend`, so nothing skill-related lives on a real filesystem.
+- **`subagents=` on `create_deep_agent`** — each `SubAgent` is a dict with
+  `name`, `description`, `system_prompt`, scoped `tools`, and `interrupt_on`.
+  deepagents auto-adds a delegation tool; the main agent sees only the
+  subagents' names+descriptions and delegates by description. Skill tools are
+  scoped to the subagent, never bound to the main agent — progressive
+  disclosure of *tools*, native.
+
 ## Runtime flow
 
 **Resolution (in `run_agent()`, extending today's resolve→assemble→build
@@ -88,56 +121,46 @@ sequence):**
 1. Resolve roles + user id (exists today).
 2. `resolve_skills(user_id, roles)` → *global skills the user is role-allowed*
    ∪ *skills the user owns* (`owner_user_id = user_id`). Each `kind='mcp'`
-   skill is cross-checked against `allowed_servers()` so a card is never shown
-   for a server the user cannot run; disabled skills and disabled backing
-   servers are filtered out.
-3. Build skill cards → `assemble_system_prompt(custom_instructions, skills)`.
-4. Bind `activate_skill` plus today's base tools. Skill tools are **not**
-   pre-bound.
+   skill is cross-checked against `allowed_servers()` so a skill is never
+   offered for a server the user cannot run; disabled skills and disabled
+   backing servers are filtered out.
+3. Split the resolved skills by `kind` and feed them to the two deepagents
+   primitives below.
 
-**Prompt assembly (extends the M2 seam).** `assemble_system_prompt()` gains a
-`skills` parameter and appends a Skills section of cards — `name` + `trigger`
-only, no schemas or doc bodies:
+**doc-skills → `SkillsMiddleware` over a `StateBackend`.** For each resolved
+`kind='doc'` skill, write a `SKILL.md` (frontmatter `name` = our `name`,
+`description` = our `trigger`; body = `instructions`) into a `StateBackend`,
+then pass `SkillsMiddleware(backend=…, sources=[…])` into `create_deep_agent`.
+The middleware renders the cards and handles on-demand body reads. No
+custom prompt section and no `activate_skill` tool.
 
-```
-## Skills
-You have skills you can activate when a task calls for one. To use a skill,
-call activate_skill(name) — this loads its tools and instructions.
-- github — use when working with GitHub repos, PRs, issues, or code review
-- expense-policy — use when answering questions about reimbursement or travel spend
-```
+**mcp-skills → `subagents=`.** For each resolved `kind='mcp'` skill, build a
+`SubAgent` dict: `name` = our `name`, `description` = our `trigger`,
+`system_prompt` seeded from the trigger (and any future skill instructions),
+`tools` = that server's adapted `StructuredTool`s (from the existing
+`build_run_toolset` adapter path), `interrupt_on` = the per-tool M3.5 config
+for that server. Pass the list via `create_deep_agent(subagents=…)`.
 
-**The `activate_skill(name)` meta-tool.** Always bound — the one tool that is
-always present. Dispatch by kind:
-
-- **doc-skill** → returns the `instructions` body as the tool result, in
-  context for the rest of the run. No new tools needed.
-- **mcp-skill (Approach C, primary)** → spins up a subagent scoped to that
-  server's tools, seeded with a system prompt from the skill's
-  trigger/instructions; the subagent does the work and returns its result.
-  Skill tools never bloat the main agent's binding.
-
-**Approach A probe (decided in the spike).** A branch where `activate_skill`
-instead appends to an `active_skills` field in graph state, and a dynamic
-model node rebinds the main agent's tools on the next step — "true" in-run
-disclosure. The spec commits to **C as the fallback-safe default**; A is
-adopted for v1 only if the spike shows deepagents exposes a clean
-dynamic-model seam at acceptable latency and tool-selection quality.
+**Base prompt.** `assemble_system_prompt(custom_instructions)` is unchanged —
+the skills surface comes entirely from `SkillsMiddleware` and the subagent
+delegation tool, so the M2 seam keeps its single responsibility.
 
 ## Integration points
 
 All changes extend existing seams; no parallel paths.
 
-- `rehketo/db/models.py` — new `Skill` model + migration.
-- `rehketo/agent/prompt.py` — `assemble_system_prompt()` gains `skills`; adds
-  the Skills card section.
-- `rehketo/agent/run.py` — add the `resolve_skills(...)` call to the resolve
-  sequence.
+- `rehketo/db/models.py` — new `Skill` model + migration `0014`.
 - `rehketo/mcp/skills.py` (new) — `resolve_skills()` (scope ∪ role math,
-  server cross-check) and the `activate_skill` tool factory + subagent
-  construction.
-- `rehketo/agent/graph.py` — bind `activate_skill`; house the Approach-A
-  dynamic-model probe behind a clearly-marked seam.
+  server cross-check) returning resolved doc-skills and mcp-skills; helpers to
+  materialize doc-skills into a `StateBackend` and to build `SubAgent` dicts
+  from mcp-skills (reusing the `build_run_toolset` adapter for tools).
+- `rehketo/agent/run.py` — call `resolve_skills(...)` in the resolve sequence
+  and thread the doc-backend + subagents into the agent build.
+- `rehketo/agent/graph.py` — `build_agent()` gains `subagents` and a skills
+  `backend`/`sources` parameter, forwarded to `create_deep_agent` (with
+  `SkillsMiddleware` installed when doc-skills exist).
+- `rehketo/agent/prompt.py` — unchanged (recorded here so a reviewer does not
+  expect a change that the framework made unnecessary).
 - Later slices: `rehketo/api/` admin route for global skills; `/settings` UI
   for user-owned skills.
 
@@ -145,11 +168,14 @@ All changes extend existing seams; no parallel paths.
 
 1. **Slice 1 — the spike (risk retirement).** `Skill` model + migration; seed
    one MCP-skill and one doc-skill directly in the DB (no UI). Implement
-   `resolve_skills`, cards in the prompt, `activate_skill` via subagent (C),
-   plus the A probe. Validate end-to-end and measure the tool-selection lift.
-   **Checkpoint: decide C vs A for v1.**
+   `resolve_skills`, doc-skill `StateBackend` materialization + `SkillsMiddleware`
+   wiring, and mcp-skill `SubAgent` construction. Validate end-to-end and
+   measure the tool-selection lift. The framework already retires the
+   activation-mechanism risk, so the spike's question is narrowed to: *does
+   wiring our registry into these primitives measurably improve when the agent
+   reaches for the right capability?*
 2. **Slice 2 — global skills productionized.** Admin CRUD route, role gating
-   enforced, e2e coverage, transcript rendering of activation events.
+   enforced, e2e coverage, transcript rendering of skill/subagent activity.
 3. **Slice 3 — user-scoped skills.** Authoring surface for `owner_user_id`
    skills (`/settings`), scope enforcement in resolution. *(Spec-aware now,
    built here.)*
@@ -157,13 +183,18 @@ All changes extend existing seams; no parallel paths.
 ## Testing & success criteria
 
 - **Unit:** `resolve_skills` scope/role math (global ∪ owned, server
-  cross-check, disabled filtering); `assemble_system_prompt` card rendering;
-  `activate_skill` dispatch for both kinds.
-- **e2e (offline browser suite):** a run where the model activates a skill and
-  uses its tool — guards the wire shapes the AGENTS.md validation block calls
-  out (run `pytest -m e2e` whenever these shapes change).
+  cross-check, disabled filtering); doc-skill `SKILL.md` materialization
+  (frontmatter shape, body); `SubAgent` construction from an mcp-skill
+  (description = trigger, tools from the adapter, `interrupt_on` carried).
+- **Integration:** a `run_agent` run where the model delegates to an mcp-skill
+  subagent and its tool fires — reuse the in-memory FastMCP transport pattern
+  from `test_run_agent_tools.py`; assert the `tool.call`/`tool.result` events
+  still stream.
+- **e2e (offline browser suite):** a run that exercises a skill end-to-end —
+  guards the wire shapes the AGENTS.md validation block calls out (run
+  `pytest -m e2e` whenever these shapes change).
 - **Success metric (spike):** a small eval set of prompts that *should*
-  trigger a skill. Compare baseline (today: flat tools) against the skill-card
-  prompt on activation rate / correct tool use. The milestone's premise is
-  "the agent doesn't know when" — the bar is a measurable lift in reaching for
-  the right capability, not merely "it runs."
+  trigger a skill. Compare baseline (today: flat tools) against the
+  skills-wired agent on activation rate / correct tool use. The milestone's
+  premise is "the agent doesn't know when" — the bar is a measurable lift in
+  reaching for the right capability, not merely "it runs."
