@@ -8,6 +8,8 @@ A skill is a discovery card backed by either an MCP server (kind='mcp', one
 skill per server in v1) or an authored markdown doc (kind='doc'). owner_user_id
 NULL means global; the column exists now so user-scoped skills (a later slice)
 need no schema change. The kind/backing check keeps the two shapes honest.
+mcp_server_id carries ON DELETE CASCADE: deleting a backing server removes its
+skill rows.
 """
 
 from __future__ import annotations
@@ -55,7 +57,9 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("name"),
-        sa.ForeignKeyConstraint(["mcp_server_id"], ["mcp_servers.id"]),
+        sa.ForeignKeyConstraint(
+            ["mcp_server_id"], ["mcp_servers.id"], ondelete="CASCADE"
+        ),
         sa.ForeignKeyConstraint(["owner_user_id"], ["users.id"]),
         sa.CheckConstraint("kind in ('mcp','doc')", name="skills_kind_enum"),
         sa.CheckConstraint(

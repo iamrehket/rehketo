@@ -167,7 +167,10 @@ class Skill(Base):
     trigger: Mapped[str] = mapped_column(Text, nullable=False)
     kind: Mapped[str] = mapped_column(Text, nullable=False)
     mcp_server_id: Mapped[UUID | None] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("mcp_servers.id")
+        # Server is the parent lifecycle: deleting an MCP server removes the
+        # skill card that fronts it (cascade, per migration 0006's policy).
+        PGUUID(as_uuid=True),
+        ForeignKey("mcp_servers.id", ondelete="CASCADE"),
     )
     instructions: Mapped[str | None] = mapped_column(Text)
     # NULL = global skill; else scoped to that user. Enforcement of user-scope

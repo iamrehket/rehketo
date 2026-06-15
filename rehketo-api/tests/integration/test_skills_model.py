@@ -65,3 +65,21 @@ async def test_doc_skill_without_instructions_violates_check(
     )
     with pytest.raises(IntegrityError):
         await db.commit()
+
+
+async def test_mcp_skill_without_server_violates_check(
+    settings_env, db_url, db
+) -> None:
+    db.add(
+        Skill(
+            id=uuid4(),
+            name="bad-mcp",
+            trigger="x",
+            kind="mcp",
+            mcp_server_id=None,
+            allowed_roles=["User"],
+            enabled=True,
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await db.commit()
