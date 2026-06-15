@@ -84,14 +84,23 @@ async def resolve_skills(
 SKILLS_ROOT = "/skills/"
 
 
-def doc_skill_files(skills: list[Skill]) -> dict[str, str]:
+def doc_skill_files(skills: list[Skill]) -> dict[str, dict[str, str]]:
     """Render each doc-skill as a SKILL.md (YAML frontmatter + body) keyed by
     the path SkillsMiddleware scans. deepagents reads these from agent state
-    when the files are passed on invoke, so the DB stays the source of truth."""
-    files: dict[str, str] = {}
+    when the files are passed on invoke, so the DB stays the source of truth.
+
+    Each value is a deepagents ``FileData`` dict, not a bare string — its
+    StateBackend reads ``file_data["content"]`` and would raise
+    ``TypeError: string indices must be integers`` on a plain string. ``content``
+    and ``encoding`` are the required keys; timestamps are optional."""
+    files: dict[str, dict[str, str]] = {}
     for s in skills:
         frontmatter = f"---\nname: {s.name}\ndescription: {s.trigger}\n---\n"
-        files[f"{SKILLS_ROOT}{s.name}/SKILL.md"] = f"{frontmatter}\n{s.instructions}"
+        body = f"{frontmatter}\n{s.instructions}"
+        files[f"{SKILLS_ROOT}{s.name}/SKILL.md"] = {
+            "content": body,
+            "encoding": "utf-8",
+        }
     return files
 
 
