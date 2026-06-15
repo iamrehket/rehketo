@@ -43,6 +43,8 @@ async def _fake_build_agent(
     system_prompt: str,
     tools: Sequence[Any] = (),
     interrupt_on: Any = None,
+    subagents: Any = None,
+    skill_sources: Any = None,
 ) -> AsyncIterator[_PartialThenHangAgent]:
     yield _PartialThenHangAgent()
 
@@ -61,6 +63,8 @@ async def _fake_failing_build_agent(
     system_prompt: str,
     tools: Sequence[Any] = (),
     interrupt_on: Any = None,
+    subagents: Any = None,
+    skill_sources: Any = None,
 ) -> AsyncIterator[_RaisingAgent]:
     yield _RaisingAgent()
 
@@ -229,6 +233,8 @@ async def test_succeeded_run_message_has_succeeded_status(
         system_prompt: str,
         tools: Sequence[Any] = (),
         interrupt_on: Any = None,
+        subagents: Any = None,
+        skill_sources: Any = None,
     ) -> AsyncIterator[_HiAgent]:
         yield _HiAgent()
 
