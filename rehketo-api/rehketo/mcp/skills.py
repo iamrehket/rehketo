@@ -6,19 +6,24 @@ so we never offer a card for a server the user cannot run."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 
 from rehketo.db.models import Skill
+from rehketo.mcp.registry import build_run_toolset
 from rehketo.mcp.servers import allowed_servers
 from rehketo.permissions.resolved import ResolvedPermissions
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
+    from contextlib import AsyncExitStack
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from rehketo.db.models import McpServer
+    from rehketo.runs.event_bus import RunEventBus
 
 
 @dataclass(frozen=True)
@@ -88,3 +93,45 @@ def doc_skill_files(skills: list[Skill]) -> dict[str, str]:
         frontmatter = f"---\nname: {s.name}\ndescription: {s.trigger}\n---\n"
         files[f"{SKILLS_ROOT}{s.name}/SKILL.md"] = f"{frontmatter}\n{s.instructions}"
     return files
+
+
+async def build_skill_subagents(
+    stack: AsyncExitStack,
+    mcp_skills: list[Skill],
+    servers: Sequence[McpServer],
+    *,
+    run_id: str,
+    bus: RunEventBus,
+) -> list[dict[str, Any]]:
+    """One SubAgent per mcp-skill, scoped to its server's tools. Reuses the
+    existing toolset builder (clients live on `stack`); tools are grouped by
+    the "<server>__" name prefix the adapter assigns, and each subagent carries
+    its server's M3.5 interrupt_on subset so approval stays orthogonal."""
+    by_id = {srv.id: srv for srv in servers}
+    needed = [by_id[s.mcp_server_id] for s in mcp_skills if s.mcp_server_id in by_id]
+    tools, interrupt_on = await build_run_toolset(stack, needed, run_id=run_id, bus=bus)
+    subagents: list[dict[str, Any]] = []
+    for skill in mcp_skills:
+        if skill.mcp_server_id is None:
+            continue
+        server = by_id.get(skill.mcp_server_id)
+        if server is None:
+            continue
+        prefix = f"{server.name}__"
+        skill_tools = [t for t in tools if t.name.startswith(prefix)]
+        if not skill_tools:
+            # Server was unreachable at connect time; build_run_toolset skips it
+            # (a broken tool server must not take the run down). Drop the skill.
+            continue
+        spec: dict[str, Any] = {
+            "name": skill.name,
+            "description": skill.trigger,
+            "system_prompt": skill.instructions
+            or f"You handle tasks where: {skill.trigger}.",
+            "tools": skill_tools,
+        }
+        sub_interrupts = {k: v for k, v in interrupt_on.items() if k.startswith(prefix)}
+        if sub_interrupts:
+            spec["interrupt_on"] = sub_interrupts
+        subagents.append(spec)
+    return subagents
