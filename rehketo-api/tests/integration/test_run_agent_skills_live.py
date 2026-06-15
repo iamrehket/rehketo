@@ -58,12 +58,9 @@ class _ScriptedModel(BaseChatModel):
     ) -> ChatResult:
         idx = self._call_idx
         if idx >= len(self.responses):
-            msg = (
-                f"_ScriptedModel ran out of responses "
-                f"(call {idx}, have {len(self.responses)}). "
-                "Extend the responses list if deepagents makes extra model calls."
+            raise RuntimeError(
+                "scripted model exhausted: more LLM calls than scripted turns"
             )
-            raise StopIteration(msg)
         self._call_idx += 1
         return ChatResult(generations=[ChatGeneration(message=self.responses[idx])])
 
