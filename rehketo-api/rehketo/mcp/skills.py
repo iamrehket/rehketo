@@ -74,3 +74,17 @@ async def resolve_skills(
         doc=[s for s in visible if s.kind == "doc"],
         mcp=[s for s in visible if s.kind == "mcp" and s.mcp_server_id in allowed_ids],
     )
+
+
+SKILLS_ROOT = "/skills/"
+
+
+def doc_skill_files(skills: list[Skill]) -> dict[str, str]:
+    """Render each doc-skill as a SKILL.md (YAML frontmatter + body) keyed by
+    the path SkillsMiddleware scans. deepagents reads these from agent state
+    when the files are passed on invoke, so the DB stays the source of truth."""
+    files: dict[str, str] = {}
+    for s in skills:
+        frontmatter = f"---\nname: {s.name}\ndescription: {s.trigger}\n---\n"
+        files[f"{SKILLS_ROOT}{s.name}/SKILL.md"] = f"{frontmatter}\n{s.instructions}"
+    return files
