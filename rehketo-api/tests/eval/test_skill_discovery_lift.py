@@ -29,14 +29,16 @@ Run manually (needs a live model — see tests/eval/README.md):
 
     uv run pytest tests/eval -m eval -s
 
-Bifrost target defaults to the local dev instance; override with
-EVAL_BIFROST_BASE_URL / EVAL_BIFROST_API_KEY / EVAL_AGENT_MODEL.
+Bifrost target defaults to the app's own rehketo-api/.env (BIFROST_BASE_URL /
+BIFROST_API_KEY / AGENT_MODEL); override with EVAL_BIFROST_BASE_URL /
+EVAL_BIFROST_API_KEY / EVAL_AGENT_MODEL.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -107,10 +109,35 @@ _DOC_INSTRUCTIONS = (
 )
 
 
+_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+
+
+def _dotenv(name: str) -> str | None:
+    """Read a value straight from rehketo-api/.env. The settings_env fixture
+    overwrites os.environ with mock Bifrost values, so the app's real key isn't
+    reachable via Settings here — go to the file the app itself loads."""
+    if not _ENV_FILE.exists():
+        return None
+    for line in _ENV_FILE.read_text().splitlines():
+        k, _, v = line.partition("=")
+        if k.strip() == name:
+            return v.strip()
+    return None
+
+
 def _bifrost_target() -> tuple[str, str, str]:
-    base = os.environ.get("EVAL_BIFROST_BASE_URL", "http://localhost:8088/v1")
-    key = os.environ.get("EVAL_BIFROST_API_KEY", "dev-noop")
-    model = os.environ.get("EVAL_AGENT_MODEL", "claude-sonnet-4-6")
+    # Precedence: explicit EVAL_* override -> the app's own .env -> default.
+    # Defaulting to .env means `pytest tests/eval -m eval -s` targets the live
+    # local Bifrost with the real virtual key, no manual export needed.
+    base = os.environ.get("EVAL_BIFROST_BASE_URL") or (
+        _dotenv("BIFROST_BASE_URL") or "http://localhost:8088/v1"
+    )
+    key = os.environ.get("EVAL_BIFROST_API_KEY") or (
+        _dotenv("BIFROST_API_KEY") or "dev-noop"
+    )
+    model = os.environ.get("EVAL_AGENT_MODEL") or (
+        _dotenv("AGENT_MODEL") or "claude-sonnet-4-6"
+    )
     return base, key, model
 
 
