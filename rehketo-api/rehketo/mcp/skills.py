@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from deepagents.backends.utils import create_file_data
 from sqlalchemy import or_, select
 
 from rehketo.db.models import Skill
@@ -84,23 +85,23 @@ async def resolve_skills(
 SKILLS_ROOT = "/skills/"
 
 
-def doc_skill_files(skills: list[Skill]) -> dict[str, dict[str, str]]:
+def doc_skill_files(skills: list[Skill]) -> dict[str, Any]:
     """Render each doc-skill as a SKILL.md (YAML frontmatter + body) keyed by
     the path SkillsMiddleware scans. deepagents reads these from agent state
     when the files are passed on invoke, so the DB stays the source of truth.
 
-    Each value is a deepagents ``FileData`` dict, not a bare string — its
-    StateBackend reads ``file_data["content"]`` and would raise
-    ``TypeError: string indices must be integers`` on a plain string. ``content``
-    and ``encoding`` are the required keys; timestamps are optional."""
-    files: dict[str, dict[str, str]] = {}
+    Each value is a complete deepagents ``FileData`` dict — built via the
+    library's own ``create_file_data`` so the shape always matches what its
+    backends expect. A bare string raises ``TypeError: string indices must be
+    integers`` on read; an incomplete dict (missing the ``created_at`` /
+    ``modified_at`` timestamps) raises ``KeyError: 'modified_at'`` in the slice
+    paths that re-emit a file. Letting deepagents build it keeps us correct as
+    that contract evolves."""
+    files: dict[str, Any] = {}
     for s in skills:
         frontmatter = f"---\nname: {s.name}\ndescription: {s.trigger}\n---\n"
         body = f"{frontmatter}\n{s.instructions}"
-        files[f"{SKILLS_ROOT}{s.name}/SKILL.md"] = {
-            "content": body,
-            "encoding": "utf-8",
-        }
+        files[f"{SKILLS_ROOT}{s.name}/SKILL.md"] = create_file_data(body)
     return files
 
 
