@@ -108,14 +108,22 @@ async def build_skill_subagents(
     the "<server>__" name prefix the adapter assigns, and each subagent carries
     its server's M3.5 interrupt_on subset so approval stays orthogonal."""
     by_id = {srv.id: srv for srv in servers}
-    needed = [by_id[s.mcp_server_id] for s in mcp_skills if s.mcp_server_id in by_id]
+    # One skill per server in v1, but nothing enforces that at the DB level and
+    # bundle-skills (later) may map several skills to one server — dedup so we
+    # open each server's client exactly once.
+    seen_ids: set[UUID] = set()
+    needed: list[McpServer] = []
+    for skill in mcp_skills:
+        sid = skill.mcp_server_id
+        if sid is not None and sid in by_id and sid not in seen_ids:
+            needed.append(by_id[sid])
+            seen_ids.add(sid)
     tools, interrupt_on = await build_run_toolset(stack, needed, run_id=run_id, bus=bus)
     subagents: list[dict[str, Any]] = []
     for skill in mcp_skills:
-        if skill.mcp_server_id is None:
-            continue
-        server = by_id.get(skill.mcp_server_id)
-        if server is None:
+        sid = skill.mcp_server_id
+        server = by_id.get(sid) if sid is not None else None
+        if server is None:  # caller omitted this skill's server, or no server id
             continue
         prefix = f"{server.name}__"
         skill_tools = [t for t in tools if t.name.startswith(prefix)]
@@ -127,7 +135,10 @@ async def build_skill_subagents(
             "name": skill.name,
             "description": skill.trigger,
             "system_prompt": skill.instructions
-            or f"You handle tasks where: {skill.trigger}.",
+            or (
+                "You are a specialized subagent. Engage your tools when: "
+                f"{skill.trigger}"
+            ),
             "tools": skill_tools,
         }
         sub_interrupts = {k: v for k, v in interrupt_on.items() if k.startswith(prefix)}

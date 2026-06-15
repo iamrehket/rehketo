@@ -51,4 +51,49 @@ async def test_one_subagent_per_mcp_skill(settings_env, monkeypatch) -> None:
     sub: dict[str, Any] = subs[0]
     assert sub["name"] == "github"
     assert sub["description"] == "use when working with GitHub"
+    assert sub["system_prompt"] == (
+        "You are a specialized subagent. Engage your tools when: "
+        "use when working with GitHub"
+    )
     assert [t.name for t in sub["tools"]] == ["github__list_prs"]
+
+
+async def test_interrupt_on_propagated_for_non_auto_approve(
+    settings_env, monkeypatch
+) -> None:
+    server = FastMCP("github")
+
+    @server.tool
+    def list_prs() -> str:
+        """List PRs."""
+        return "[]"
+
+    monkeypatch.setattr(registry, "_client_for", lambda s: Client(server))
+
+    srv = McpServer(
+        id=uuid4(),
+        name="github",
+        url="https://x/mcp",
+        auth_token_ct=None,
+        allowed_roles=["User"],
+        enabled=True,
+        auto_approve=False,
+    )
+    skill = Skill(
+        id=uuid4(),
+        name="github",
+        trigger="use when working with GitHub",
+        kind="mcp",
+        mcp_server_id=srv.id,
+        allowed_roles=["User"],
+        enabled=True,
+    )
+
+    bus = PostgresEventBus()
+    async with contextlib.AsyncExitStack() as stack:
+        subs = await build_skill_subagents(
+            stack, [skill], [srv], run_id=str(uuid4()), bus=bus
+        )
+
+    assert "interrupt_on" in subs[0]
+    assert "github__list_prs" in subs[0]["interrupt_on"]
