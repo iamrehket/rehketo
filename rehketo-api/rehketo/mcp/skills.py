@@ -30,6 +30,9 @@ class ResolvedSkills:
 async def resolve_skills(
     db: AsyncSession, *, user_id: UUID, roles: Iterable[str]
 ) -> ResolvedSkills:
+    # Iterable[str] may be a one-shot generator; this function consumes roles
+    # twice (perms + allowed_servers), so materialize once.
+    roles = list(roles)
     perms = ResolvedPermissions(user_id=user_id, roles=frozenset(roles))
     rows = (
         (
@@ -54,6 +57,9 @@ async def resolve_skills(
         s
         for s in rows
         if s.owner_user_id == user_id
+        # resource_type is dormant in v1 RBAC (check ignores it) but is kept
+        # for the OpenFGA cutover; "skill" follows the singular-of-table-name
+        # convention, as servers.py uses "mcp_server" for the mcp_servers table.
         or perms.can(
             "chat.use_mcp_server",
             resource_type="skill",
