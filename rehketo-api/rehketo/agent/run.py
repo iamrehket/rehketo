@@ -259,6 +259,9 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                     skill_sources=[SKILLS_ROOT] if skill_files else None,
                 ):
                     config: Any = {"configurable": {"thread_id": str(run_id)}}
+                    # A run with a pending interrupt in its checkpoint is a
+                    # resume: rebuild the decision-bearing Command from the
+                    # durable journal instead of restarting from history.
                     resume_cmd = (
                         await build_resume_command(agent, config, run_id=run_id)
                         if interrupt_on
