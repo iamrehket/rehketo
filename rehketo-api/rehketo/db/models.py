@@ -154,6 +154,46 @@ class McpServer(Base):
     )
 
 
+class Skill(Base):
+    __tablename__ = "skills"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    display_name: Mapped[str | None] = mapped_column(Text)
+    # The "use when…" line — the discovery surface. For mcp-skills it becomes
+    # the SubAgent description; for doc-skills the SKILL.md frontmatter desc.
+    trigger: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    mcp_server_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("mcp_servers.id")
+    )
+    instructions: Mapped[str | None] = mapped_column(Text)
+    # NULL = global skill; else scoped to that user. Enforcement of user-scope
+    # authoring is a later slice; the column + resolution rule exist now.
+    owner_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id"), index=True
+    )
+    allowed_roles: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint("kind in ('mcp','doc')", name="skills_kind_enum"),
+        CheckConstraint(
+            "(kind = 'mcp' AND mcp_server_id IS NOT NULL AND instructions IS NULL) "
+            "OR (kind = 'doc' AND instructions IS NOT NULL AND mcp_server_id IS NULL)",
+            name="skills_kind_backing",
+        ),
+    )
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
