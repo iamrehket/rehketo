@@ -85,6 +85,8 @@ async def test_run_agent_executes_tools_and_streams_events(
         system_prompt: str,
         tools: Sequence[Any] = (),
         interrupt_on: Any = None,
+        subagents: Any = None,
+        skill_sources: Any = None,
     ) -> AsyncIterator[_ToolCallingAgent]:
         captured["tools"] = list(tools)
         yield _ToolCallingAgent(tools)
@@ -136,6 +138,8 @@ async def test_user_without_server_role_gets_no_tools(
         system_prompt: str,
         tools: Sequence[Any] = (),
         interrupt_on: Any = None,
+        subagents: Any = None,
+        skill_sources: Any = None,
     ) -> AsyncIterator[_QuietAgent]:
         captured["tools"] = list(tools)
         yield _QuietAgent()
@@ -198,6 +202,8 @@ async def test_dying_client_close_does_not_flip_run_to_failed(
         system_prompt: str,
         tools: Sequence[Any] = (),
         interrupt_on: Any = None,
+        subagents: Any = None,
+        skill_sources: Any = None,
     ) -> AsyncIterator[_QuietAgent]:
         yield _QuietAgent(tools)
 

@@ -27,6 +27,12 @@ from rehketo.db.models import (
 )
 from rehketo.mcp.registry import build_run_toolset
 from rehketo.mcp.servers import allowed_servers
+from rehketo.mcp.skills import (
+    SKILLS_ROOT,
+    build_skill_subagents,
+    doc_skill_files,
+    resolve_skills,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -221,21 +227,38 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                     .all()
                 )
                 servers = await allowed_servers(db, user_id=user_id, roles=roles)
+                resolved_skills = await resolve_skills(db, user_id=user_id, roles=roles)
             system_prompt = assemble_system_prompt(custom_instructions)
 
             # MCP clients live exactly as long as the agent run; the exit
             # stack closes them on every path (success, failure, cancel).
             async with contextlib.AsyncExitStack() as stack:
+                # A server exposed as an mcp-skill is reached ONLY by delegating
+                # to its subagent — its tools must not also bind to the main
+                # agent, or there is no progressive disclosure. Partition: plain
+                # servers stay flat tools (unchanged behavior), skill-backed
+                # servers become subagents.
+                skill_server_ids = {s.mcp_server_id for s in resolved_skills.mcp}
+                plain_servers = [s for s in servers if s.id not in skill_server_ids]
                 tools, interrupt_on = await build_run_toolset(
-                    stack, servers, run_id=str(run_id), bus=bus
+                    stack, plain_servers, run_id=str(run_id), bus=bus
+                )
+                # M4.5 discovery: doc-skills surface via SkillsMiddleware
+                # (in-state SKILL.md files), mcp-skills via subagents the model
+                # delegates to. resolve_skills already filtered to this user.
+                skill_files = doc_skill_files(resolved_skills.doc)
+                subagents = await build_skill_subagents(
+                    stack, resolved_skills.mcp, servers, run_id=str(run_id), bus=bus
                 )
                 async for agent in build_agent(
-                    str(run_id), system_prompt, tools=tools, interrupt_on=interrupt_on
+                    str(run_id),
+                    system_prompt,
+                    tools=tools,
+                    interrupt_on=interrupt_on,
+                    subagents=subagents or None,
+                    skill_sources=[SKILLS_ROOT] if skill_files else None,
                 ):
                     config: Any = {"configurable": {"thread_id": str(run_id)}}
-                    # A run with a pending interrupt in its checkpoint is a
-                    # resume: rebuild the decision-bearing Command from the
-                    # durable journal instead of restarting from history.
                     resume_cmd = (
                         await build_resume_command(agent, config, run_id=run_id)
                         if interrupt_on
@@ -246,8 +269,11 @@ async def run_agent(run_id: UUID, bus: RunEventBus) -> None:  # noqa: C901,PLR09
                         # approval boundary (Task 9 fills in _rehydrate_segments).
                         async with sessionmaker()() as db:
                             await _rehydrate_segments(db, run_id, segments)
+                    # Skill files ride the initial state, not the resume Command.
                     stream_input: Any = (
-                        resume_cmd if resume_cmd is not None else {"messages": history}
+                        resume_cmd
+                        if resume_cmd is not None
+                        else {"messages": history, "files": skill_files}
                     )
                     while True:
                         async for chunk in agent.astream(

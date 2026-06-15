@@ -180,6 +180,8 @@ def make_fake_build_agent(agent: FakeStreamingAgent) -> Any:
         system_prompt: str,
         tools: Sequence[Any] = (),
         interrupt_on: Any = None,
+        subagents: Any = None,
+        skill_sources: Any = None,
     ) -> AsyncIterator[FakeStreamingAgent]:
         yield agent
 
