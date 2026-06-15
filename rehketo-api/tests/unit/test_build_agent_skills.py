@@ -5,7 +5,12 @@ from typing import Any
 import rehketo.agent.graph as graph_mod
 
 
-async def test_build_agent_forwards_skills_and_subagents(monkeypatch) -> None:
+async def test_build_agent_forwards_skills_and_subagents(
+    settings_env, monkeypatch
+) -> None:
+    # build_agent reads get_settings() twice (build_chat_model + _checkpointer_dsn);
+    # settings_env supplies the env so this stays a pure unit test that doesn't
+    # depend on a local .env (which CI lacks).
     captured: dict[str, Any] = {}
 
     def _fake_create_deep_agent(**kwargs: Any) -> str:
