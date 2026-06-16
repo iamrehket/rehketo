@@ -24,7 +24,7 @@ export type User = {
 	email: string | null;
 };
 
-// The 12 canonical actions from rehketo-api/rehketo/permissions/actions.py.
+// The 14 canonical actions from rehketo-api/rehketo/permissions/actions.py.
 // Keep in sync — if the backend adds one, this is the single source of
 // truth on the UI side.
 export type Capability =
@@ -37,9 +37,11 @@ export type Capability =
 	| 'chat.upload_files'
 	| 'chat.use_mcp_server'
 	| 'chat.approve_tool_call'
+	| 'chat.author_skill'
 	| 'admin.manage_users'
 	| 'admin.view_audit'
-	| 'admin.manage_mcp_servers';
+	| 'admin.manage_mcp_servers'
+	| 'admin.manage_skills';
 
 // The /me response is flat (matches rehketo-api/rehketo/api/me.py). `User` is
 // assembled from these fields in auth.hydrate; the backend is the contract

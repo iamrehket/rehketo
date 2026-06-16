@@ -27,7 +27,9 @@ def test_contains_expected_actions():
         "chat.cancel_run",
         "chat.upload_files",
         "chat.approve_tool_call",
+        "chat.author_skill",
         "admin.manage_users",
+        "admin.manage_skills",
         "admin.view_audit",
     }
     assert required.issubset(set(ACTIONS))

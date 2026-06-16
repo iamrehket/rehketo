@@ -96,3 +96,30 @@ def test_admin_manage_mcp_servers_is_admin_only() -> None:
         resource_type=None,
         resource_id=None,
     )
+
+
+def test_manage_skills_is_admin_only() -> None:
+    assert check_permission(
+        ["Admin"], "admin.manage_skills", resource_type=None, resource_id=None
+    )
+    assert not check_permission(
+        ["User"], "admin.manage_skills", resource_type=None, resource_id=None
+    )
+    assert not check_permission(
+        ["Moderator"],
+        "admin.manage_skills",
+        resource_type=None,
+        resource_id=None,
+    )
+
+
+def test_author_skill_granted_to_all_chat_roles() -> None:
+    assert check_permission(
+        ["User"], "chat.author_skill", resource_type=None, resource_id=None
+    )
+    assert check_permission(
+        ["Moderator"], "chat.author_skill", resource_type=None, resource_id=None
+    )
+    assert check_permission(
+        ["Admin"], "chat.author_skill", resource_type=None, resource_id=None
+    )

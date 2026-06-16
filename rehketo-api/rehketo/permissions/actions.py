@@ -15,10 +15,12 @@ ACTIONS: tuple[str, ...] = (
     "chat.upload_files",
     "chat.use_mcp_server",
     "chat.approve_tool_call",
+    "chat.author_skill",
     # Admin domain
     "admin.manage_users",
     "admin.view_audit",
     "admin.manage_mcp_servers",
+    "admin.manage_skills",
 )
 
 ACTIONS_SET = frozenset(ACTIONS)
