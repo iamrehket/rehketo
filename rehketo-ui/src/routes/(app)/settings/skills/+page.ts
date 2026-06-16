@@ -1,7 +1,8 @@
 import { error, redirect } from '@sveltejs/kit';
 
 import { apiFetch } from '$lib/api';
-import { ApiError, type MySkillList } from '$lib/types';
+import { auth } from '$lib/stores/auth.svelte';
+import { ApiError, type AdminSkillList, type McpServerList, type MySkillList } from '$lib/types';
 import type { PageLoad } from './$types';
 
 export const ssr = false;
@@ -10,7 +11,14 @@ export const prerender = false;
 export const load: PageLoad = async ({ url }) => {
 	try {
 		const mine = await apiFetch<MySkillList>('/me/skills', { skipAuthRedirect: true });
-		return { skills: mine.items };
+		if (auth.can('admin.manage_skills')) {
+			const [allSkills, servers] = await Promise.all([
+				apiFetch<AdminSkillList>('/admin/skills', { skipAuthRedirect: true }),
+				apiFetch<McpServerList>('/admin/mcp-servers', { skipAuthRedirect: true })
+			]);
+			return { skills: mine.items, adminSkills: allSkills.items, servers: servers.items };
+		}
+		return { skills: mine.items, adminSkills: null, servers: null };
 	} catch (err) {
 		if (err instanceof ApiError) {
 			if (err.status === 401) {

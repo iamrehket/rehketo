@@ -95,6 +95,10 @@ export type AdminSkillOut = {
 	updated_at: string;
 };
 
+export type AdminSkillList = {
+	items: AdminSkillOut[];
+};
+
 export type ConversationSummary = {
 	id: string;
 	title: string | null;

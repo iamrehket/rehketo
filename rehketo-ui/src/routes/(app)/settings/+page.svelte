@@ -82,12 +82,19 @@
 		</a>
 	</section>
 
-	{#if auth.can('admin.manage_mcp_servers')}
+	{#if auth.can('admin.manage_mcp_servers') || auth.can('admin.manage_skills')}
 		<section class="mt-8">
 			<h2 class="text-sm font-semibold">Administration</h2>
-			<a href="/settings/mcp-servers" class="mt-2 inline-block text-sm text-accent hover:underline">
-				Manage MCP servers →
-			</a>
+			{#if auth.can('admin.manage_mcp_servers')}
+				<a href="/settings/mcp-servers" class="mt-2 block text-sm text-accent hover:underline">
+					Manage MCP servers →
+				</a>
+			{/if}
+			{#if auth.can('admin.manage_skills')}
+				<a href="/settings/skills" class="mt-2 block text-sm text-accent hover:underline">
+					Manage skills →
+				</a>
+			{/if}
 		</section>
 	{/if}
 </div>
