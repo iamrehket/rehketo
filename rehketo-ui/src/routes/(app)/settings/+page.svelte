@@ -75,6 +75,13 @@
 		</div>
 	</section>
 
+	<section class="mt-8">
+		<h2 class="text-sm font-semibold">Skills</h2>
+		<a href="/settings/skills" class="mt-2 inline-block text-sm text-accent hover:underline">
+			View your skills →
+		</a>
+	</section>
+
 	{#if auth.can('admin.manage_mcp_servers')}
 		<section class="mt-8">
 			<h2 class="text-sm font-semibold">Administration</h2>

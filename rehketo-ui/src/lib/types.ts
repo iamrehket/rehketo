@@ -62,6 +62,23 @@ export type PreferencesOut = {
 	custom_instructions: string;
 };
 
+// Matches rehketo-api/rehketo/api/skills_me.py MySkillOut.
+export type MySkillOut = {
+	id: string;
+	name: string;
+	display_name: string | null;
+	kind: 'doc' | 'mcp';
+	trigger: string;
+	instructions: string | null;
+	enabled: boolean;
+	source: 'global' | 'owned';
+	editable: boolean;
+};
+
+export type MySkillList = {
+	items: MySkillOut[];
+};
+
 export type ConversationSummary = {
 	id: string;
 	title: string | null;
