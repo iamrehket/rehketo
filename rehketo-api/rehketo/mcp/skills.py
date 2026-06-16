@@ -5,6 +5,7 @@ so we never offer a card for a server the user cannot run."""
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -113,7 +114,15 @@ def doc_skill_files(skills: list[Skill]) -> dict[str, Any]:
     that contract evolves."""
     files: dict[str, Any] = {}
     for s in skills:
-        frontmatter = f"---\nname: {s.name}\ndescription: {s.trigger}\n---\n"
+        # JSON-encode the scalars: JSON is a valid YAML subset, so a name or
+        # trigger containing ':', '"', or a newline can't break frontmatter
+        # parsing. Users author triggers now, so this is load-bearing.
+        frontmatter = (
+            "---\n"
+            f"name: {json.dumps(s.name)}\n"
+            f"description: {json.dumps(s.trigger)}\n"
+            "---\n"
+        )
         body = f"{frontmatter}\n{s.instructions}"
         files[f"{SKILLS_ROOT}{s.name}/SKILL.md"] = create_file_data(body)
     return files

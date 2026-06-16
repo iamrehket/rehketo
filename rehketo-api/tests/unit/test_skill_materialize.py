@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
 from deepagents.backends.utils import file_data_to_string
@@ -29,13 +30,28 @@ def test_emits_skill_md_per_skill() -> None:
     assert file_data["encoding"] == "utf-8"
     content = file_data["content"]
     assert content.startswith("---\n")
-    assert "name: policy" in content
-    assert "description: reimburse" in content
+    assert 'name: "policy"' in content
+    assert 'description: "reimburse"' in content
     assert content.rstrip().endswith("body")
 
 
 def test_empty_when_no_docs() -> None:
     assert doc_skill_files([]) == {}
+
+
+def test_trigger_with_yaml_metacharacters_round_trips() -> None:
+    """A user-authored trigger with a colon, quote, or newline must not break
+    SkillsMiddleware frontmatter parsing. JSON-encoding the scalar guarantees a
+    well-formed YAML string."""
+    hostile = 'use when: he said "hi"\nand more'
+    files = doc_skill_files([_doc("policy", hostile, "body")])
+    file_data = files[f"{SKILLS_ROOT}policy/SKILL.md"]
+    text = file_data_to_string(file_data)  # type: ignore[arg-type]
+    # frontmatter block is exactly two lines (name + description), so two newlines
+    front = text.split("---\n")[1]
+    assert front.count("\n") == 2  # name line + description line
+    # the description scalar is a single JSON-quoted token (no raw newline/colon leaks)
+    assert json.dumps(hostile) in text
 
 
 def test_values_satisfy_deepagents_filedata_contract() -> None:
