@@ -79,6 +79,22 @@ export type MySkillList = {
 	items: MySkillOut[];
 };
 
+// Matches rehketo-api/rehketo/api/skills_admin.py AdminSkillOut (full CRUD view).
+export type AdminSkillOut = {
+	id: string;
+	name: string;
+	display_name: string | null;
+	kind: 'doc' | 'mcp';
+	trigger: string;
+	instructions: string | null;
+	mcp_server_id: string | null;
+	owner_user_id: string | null;
+	allowed_roles: string[];
+	enabled: boolean;
+	created_at: string;
+	updated_at: string;
+};
+
 export type ConversationSummary = {
 	id: string;
 	title: string | null;
