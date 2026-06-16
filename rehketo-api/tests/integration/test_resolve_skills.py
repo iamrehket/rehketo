@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from rehketo.db.models import McpServer, Skill, User
-from rehketo.mcp.skills import resolve_skills
+from rehketo.skills import resolve_skills
 
 
 async def test_global_role_and_owned_union(settings_env, db_url, db) -> None:
@@ -117,3 +117,40 @@ async def test_mcp_skill_dropped_when_server_not_allowed(
     await db.commit()
     resolved = await resolve_skills(db, user_id=uuid4(), roles=["User"])
     assert resolved.mcp == []
+
+
+async def test_owned_shadows_global_of_same_name(settings_env, db_url, db) -> None:
+    me = uuid4()
+    db.add(User(id=me))
+    await db.flush()
+    db.add_all(
+        [
+            Skill(
+                id=uuid4(),
+                name="research",
+                trigger="global version",
+                kind="doc",
+                instructions="GLOBAL",
+                allowed_roles=["User"],
+                enabled=True,
+            ),
+            Skill(
+                id=uuid4(),
+                name="research",
+                trigger="my version",
+                kind="doc",
+                instructions="MINE",
+                owner_user_id=me,
+                allowed_roles=[],
+                enabled=True,
+            ),
+        ]
+    )
+    await db.commit()
+
+    resolved = await resolve_skills(db, user_id=me, roles=["User"])
+    # Exactly one "research" survives, and it is the owned one.
+    research = [s for s in resolved.doc if s.name == "research"]
+    assert len(research) == 1
+    assert research[0].instructions == "MINE"
+    assert research[0].owner_user_id == me

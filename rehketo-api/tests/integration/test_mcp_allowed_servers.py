@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from rehketo.db.models import McpServer
-from rehketo.mcp.servers import allowed_servers
+from rehketo.servers import allowed_servers
 
 
 def _server(name: str, roles: list[str], *, enabled: bool = True) -> McpServer:

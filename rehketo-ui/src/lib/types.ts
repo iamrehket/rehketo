@@ -24,7 +24,7 @@ export type User = {
 	email: string | null;
 };
 
-// The 12 canonical actions from rehketo-api/rehketo/permissions/actions.py.
+// The 14 canonical actions from rehketo-api/rehketo/permissions/actions.py.
 // Keep in sync — if the backend adds one, this is the single source of
 // truth on the UI side.
 export type Capability =
@@ -37,9 +37,11 @@ export type Capability =
 	| 'chat.upload_files'
 	| 'chat.use_mcp_server'
 	| 'chat.approve_tool_call'
+	| 'chat.author_skill'
 	| 'admin.manage_users'
 	| 'admin.view_audit'
-	| 'admin.manage_mcp_servers';
+	| 'admin.manage_mcp_servers'
+	| 'admin.manage_skills';
 
 // The /me response is flat (matches rehketo-api/rehketo/api/me.py). `User` is
 // assembled from these fields in auth.hydrate; the backend is the contract
@@ -58,6 +60,43 @@ export type CapabilitiesOut = {
 // Matches rehketo-api/rehketo/api/me.py PreferencesOut.
 export type PreferencesOut = {
 	custom_instructions: string;
+};
+
+// Matches rehketo-api/rehketo/api/skills_me.py MySkillOut.
+export type MySkillOut = {
+	id: string;
+	name: string;
+	display_name: string | null;
+	kind: 'doc' | 'mcp';
+	trigger: string;
+	instructions: string | null;
+	enabled: boolean;
+	source: 'global' | 'owned';
+	editable: boolean;
+};
+
+export type MySkillList = {
+	items: MySkillOut[];
+};
+
+// Matches rehketo-api/rehketo/api/skills_admin.py AdminSkillOut (full CRUD view).
+export type AdminSkillOut = {
+	id: string;
+	name: string;
+	display_name: string | null;
+	kind: 'doc' | 'mcp';
+	trigger: string;
+	instructions: string | null;
+	mcp_server_id: string | null;
+	owner_user_id: string | null;
+	allowed_roles: string[];
+	enabled: boolean;
+	created_at: string;
+	updated_at: string;
+};
+
+export type AdminSkillList = {
+	items: AdminSkillOut[];
 };
 
 export type ConversationSummary = {

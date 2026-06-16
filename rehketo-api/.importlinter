@@ -49,3 +49,14 @@ source_modules =
 forbidden_modules =
     rehketo.mcp
 allow_indirect_imports = True
+
+[importlinter:contract:neutral-resolvers-are-foundational]
+name = skills/servers resolvers do not depend on app feature layers
+type = forbidden
+source_modules =
+    rehketo.skills
+    rehketo.servers
+forbidden_modules =
+    rehketo.api
+    rehketo.mcp
+    rehketo.agent

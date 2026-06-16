@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from rehketo.db.models import McpServer, Skill
+from rehketo.db.models import McpServer, Skill, User
 
 
 async def test_doc_skill_persists(settings_env, db_url, db) -> None:
@@ -83,3 +83,54 @@ async def test_mcp_skill_without_server_violates_check(
     )
     with pytest.raises(IntegrityError):
         await db.commit()
+
+
+def _doc(name: str, *, owner: UUID | None = None) -> Skill:
+    return Skill(
+        id=uuid4(),
+        name=name,
+        trigger="t",
+        kind="doc",
+        instructions="body",
+        owner_user_id=owner,
+        allowed_roles=[],
+        enabled=True,
+    )
+
+
+async def test_user_may_reuse_a_global_name(settings_env, db_url, db) -> None:
+    me = uuid4()
+    db.add(User(id=me))
+    await db.flush()
+    db.add(_doc("research"))  # global
+    db.add(_doc("research", owner=me))  # owned, same name — allowed
+    await db.commit()  # must not raise
+
+
+async def test_two_globals_cannot_share_a_name(settings_env, db_url, db) -> None:
+    db.add(_doc("research"))
+    db.add(_doc("research"))
+    with pytest.raises(IntegrityError):
+        await db.commit()
+
+
+async def test_one_user_cannot_duplicate_their_own_name(
+    settings_env, db_url, db
+) -> None:
+    me = uuid4()
+    db.add(User(id=me))
+    await db.flush()
+    db.add(_doc("research", owner=me))
+    db.add(_doc("research", owner=me))
+    with pytest.raises(IntegrityError):
+        await db.commit()
+
+
+async def test_two_users_may_share_a_name(settings_env, db_url, db) -> None:
+    alice, bob = uuid4(), uuid4()
+    db.add(User(id=alice))
+    db.add(User(id=bob))
+    await db.flush()
+    db.add(_doc("research", owner=alice))
+    db.add(_doc("research", owner=bob))
+    await db.commit()  # must not raise

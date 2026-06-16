@@ -38,6 +38,16 @@ class ResolvedPermissions:
             resource_roles=resource_roles,
         )
 
+    def owns(self, owner_user_id: UUID | None) -> bool:
+        """Whether this principal owns a resource with the given owner.
+
+        The ownership relation lives here, not as scattered ``owner_user_id ==
+        user_id`` comparisons, so the OpenFGA cutover changes one place (the
+        same single-seam discipline as ``check_permission``). A ``None`` owner
+        is a global/unowned resource — owned by no one.
+        """
+        return owner_user_id is not None and owner_user_id == self.user_id
+
     def require(
         self,
         action: str,

@@ -96,3 +96,40 @@ def test_admin_manage_mcp_servers_is_admin_only() -> None:
         resource_type=None,
         resource_id=None,
     )
+
+
+def test_manage_skills_is_admin_only() -> None:
+    assert check_permission(
+        ["Admin"], "admin.manage_skills", resource_type=None, resource_id=None
+    )
+    assert not check_permission(
+        ["User"], "admin.manage_skills", resource_type=None, resource_id=None
+    )
+    assert not check_permission(
+        ["Moderator"],
+        "admin.manage_skills",
+        resource_type=None,
+        resource_id=None,
+    )
+
+
+def test_owns_true_only_for_caller_owned_resources() -> None:
+    from rehketo.permissions.resolved import ResolvedPermissions
+
+    me = uuid4()
+    perms = ResolvedPermissions(user_id=me, roles=frozenset())
+    assert perms.owns(me) is True
+    assert perms.owns(uuid4()) is False  # another user
+    assert perms.owns(None) is False  # global / unowned resource
+
+
+def test_author_skill_granted_to_all_chat_roles() -> None:
+    assert check_permission(
+        ["User"], "chat.author_skill", resource_type=None, resource_id=None
+    )
+    assert check_permission(
+        ["Moderator"], "chat.author_skill", resource_type=None, resource_id=None
+    )
+    assert check_permission(
+        ["Admin"], "chat.author_skill", resource_type=None, resource_id=None
+    )

@@ -11,33 +11,17 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002  # FastAPI needs runtime type for Depends()
 )
 
+from rehketo.api._validators import NAME_PATTERN, validate_roles
 from rehketo.auth.crypto import encrypt_token
 from rehketo.db import get_session
 from rehketo.db.models import McpServer
-from rehketo.permissions.check import known_roles
 from rehketo.permissions.dependencies import ResolvedPermissions, resolve_permissions
 
 router = APIRouter(prefix="/admin/mcp-servers", tags=["admin"])
 
-# Slug-like: the name prefixes tool names ({name}__{tool}) on the model's
-# tool list, so keep it identifier-safe and stable.  `__` is the separator
-# between server name and tool name, so it cannot appear inside a server name
-# (server `a__b` + tool `c` would collide with server `a` + tool `b__c`).
-# Structure: alnum segments of 1+ chars joined by single _ or - chars, so
-# consecutive separators are structurally impossible.  Max length via Field.
-_NAME_PATTERN = r"^[a-z0-9]+([_-][a-z0-9]+)*$"
-_KNOWN_ROLES: frozenset[str] = known_roles()
-
-
-def _validate_roles(roles: list[str]) -> list[str]:
-    unknown = sorted(set(roles) - _KNOWN_ROLES)
-    if unknown:
-        raise ValueError(f"unknown role(s): {', '.join(unknown)}")
-    return roles
-
 
 class McpServerCreate(BaseModel):
-    name: str = Field(pattern=_NAME_PATTERN, max_length=64)
+    name: str = Field(pattern=NAME_PATTERN, max_length=64)
     url: HttpUrl
     auth_token: str | None = Field(default=None, min_length=1)
     allowed_roles: list[str]
@@ -47,7 +31,7 @@ class McpServerCreate(BaseModel):
     @field_validator("allowed_roles")
     @classmethod
     def roles_must_be_known(cls, v: list[str]) -> list[str]:
-        return _validate_roles(v)
+        return validate_roles(v)
 
 
 class McpServerPatch(BaseModel):
@@ -65,7 +49,7 @@ class McpServerPatch(BaseModel):
     def roles_must_be_known(cls, v: list[str] | None) -> list[str] | None:
         if v is None:
             return v
-        return _validate_roles(v)
+        return validate_roles(v)
 
 
 class McpServerOut(BaseModel):
