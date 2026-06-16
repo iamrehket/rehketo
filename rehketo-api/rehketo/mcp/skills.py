@@ -73,6 +73,20 @@ async def resolve_skills(
             resource_roles=s.allowed_roles,
         )
     ]
+    # Owned shadows global: when a user's own skill shares a name with a global
+    # one, keep the owned row so exactly one card (SKILL.md file or subagent)
+    # exists per name in a run — the path /skills/{name} and the subagent name
+    # are both keyed by name and must not collide.
+    by_name: dict[str, Skill] = {}
+    for s in visible:
+        current = by_name.get(s.name)
+        if current is None or (
+            current.owner_user_id is None and s.owner_user_id == user_id
+        ):
+            by_name[s.name] = s
+    # by_name preserves the query's Skill.name ASC order (each name inserted
+    # once; a collision replaces in place), so no re-sort is needed.
+    visible = list(by_name.values())
     allowed_ids = {
         srv.id for srv in await allowed_servers(db, user_id=user_id, roles=roles)
     }
