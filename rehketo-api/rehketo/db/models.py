@@ -10,6 +10,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     LargeBinary,
     Text,
     UniqueConstraint,
@@ -160,7 +161,7 @@ class Skill(Base):
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, default=uuid4
     )
-    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str | None] = mapped_column(Text)
     # The "use when…" line — the discovery surface. For mcp-skills it becomes
     # the SubAgent description; for doc-skills the SKILL.md frontmatter desc.
@@ -193,6 +194,21 @@ class Skill(Base):
             "(kind = 'mcp' AND mcp_server_id IS NOT NULL AND instructions IS NULL) "
             "OR (kind = 'doc' AND instructions IS NOT NULL AND mcp_server_id IS NULL)",
             name="skills_kind_backing",
+        ),
+        # Per-owner namespace: globals (owner NULL) unique among themselves;
+        # each user unique within their own set; a user may reuse a global name.
+        Index(
+            "uq_skills_global_name",
+            "name",
+            unique=True,
+            postgresql_where=text("owner_user_id IS NULL"),
+        ),
+        Index(
+            "uq_skills_owner_name",
+            "owner_user_id",
+            "name",
+            unique=True,
+            postgresql_where=text("owner_user_id IS NOT NULL"),
         ),
     )
 
