@@ -12,26 +12,16 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002  # FastAPI needs runtime type for Depends()
 )
 
+from rehketo.api._validators import NAME_PATTERN, validate_roles
 from rehketo.db import get_session
 from rehketo.db.models import McpServer, Skill
-from rehketo.permissions.check import known_roles
 from rehketo.permissions.dependencies import ResolvedPermissions, resolve_permissions
 
 router = APIRouter(prefix="/admin/skills", tags=["admin"])
 
-_NAME_PATTERN = r"^[a-z0-9]+([_-][a-z0-9]+)*$"
-_KNOWN_ROLES: frozenset[str] = known_roles()
-
-
-def _validate_roles(roles: list[str]) -> list[str]:
-    unknown = sorted(set(roles) - _KNOWN_ROLES)
-    if unknown:
-        raise ValueError(f"unknown role(s): {', '.join(unknown)}")
-    return roles
-
 
 class AdminSkillCreate(BaseModel):
-    name: str = Field(pattern=_NAME_PATTERN, max_length=64)
+    name: str = Field(pattern=NAME_PATTERN, max_length=64)
     display_name: str | None = Field(default=None, max_length=128)
     kind: str
     trigger: str = Field(min_length=1, max_length=2000)
@@ -43,7 +33,7 @@ class AdminSkillCreate(BaseModel):
     @field_validator("allowed_roles")
     @classmethod
     def roles_must_be_known(cls, v: list[str]) -> list[str]:
-        return _validate_roles(v)
+        return validate_roles(v)
 
     @model_validator(mode="after")
     def kind_backing(self) -> AdminSkillCreate:
@@ -72,7 +62,7 @@ class AdminSkillPatch(BaseModel):
     @field_validator("allowed_roles")
     @classmethod
     def roles_must_be_known(cls, v: list[str] | None) -> list[str] | None:
-        return None if v is None else _validate_roles(v)
+        return None if v is None else validate_roles(v)
 
 
 class AdminSkillOut(BaseModel):

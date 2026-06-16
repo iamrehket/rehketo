@@ -12,14 +12,13 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002  # FastAPI needs runtime type for Depends()
 )
 
+from rehketo.api._validators import NAME_PATTERN
 from rehketo.db import get_session
 from rehketo.db.models import Skill
 from rehketo.permissions.dependencies import ResolvedPermissions, resolve_permissions
 from rehketo.skills import resolve_skills
 
 router = APIRouter(tags=["me"])
-
-_NAME_PATTERN = r"^[a-z0-9]+([_-][a-z0-9]+)*$"
 
 
 class MySkillOut(BaseModel):
@@ -39,7 +38,7 @@ class MySkillList(BaseModel):
 
 
 class MySkillCreate(BaseModel):
-    name: str = Field(pattern=_NAME_PATTERN, max_length=64)
+    name: str = Field(pattern=NAME_PATTERN, max_length=64)
     display_name: str | None = Field(default=None, max_length=128)
     trigger: str = Field(min_length=1, max_length=2000)
     instructions: str = Field(min_length=1)
