@@ -61,7 +61,7 @@ async def resolve_skills(
     visible = [
         s
         for s in rows
-        if s.owner_user_id == user_id
+        if perms.owns(s.owner_user_id)
         # resource_type is dormant in v1 RBAC (check ignores it) but is kept
         # for the OpenFGA cutover; "skill" follows the singular-of-table-name
         # convention, as servers.py uses "mcp_server" for the mcp_servers table.
@@ -80,7 +80,7 @@ async def resolve_skills(
     for s in visible:
         current = by_name.get(s.name)
         if current is None or (
-            current.owner_user_id is None and s.owner_user_id == user_id
+            current.owner_user_id is None and perms.owns(s.owner_user_id)
         ):
             by_name[s.name] = s
     # by_name preserves the query's Skill.name ASC order (each name inserted

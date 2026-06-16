@@ -53,8 +53,8 @@ class MySkillPatch(BaseModel):
     enabled: bool | None = None
 
 
-def _to_out(s: Skill, *, user_id: UUID) -> MySkillOut:
-    owned = s.owner_user_id == user_id
+def _to_out(s: Skill, *, perms: ResolvedPermissions) -> MySkillOut:
+    owned = perms.owns(s.owner_user_id)
     return MySkillOut(
         id=s.id,
         name=s.name,
@@ -69,20 +69,14 @@ def _to_out(s: Skill, *, user_id: UUID) -> MySkillOut:
 
 
 async def _get_owned_doc_or_404(
-    db: AsyncSession, skill_id: UUID, user_id: UUID
+    db: AsyncSession, skill_id: UUID, perms: ResolvedPermissions
 ) -> Skill:
     s = (
         await db.execute(
-            select(Skill).where(
-                and_(
-                    Skill.id == skill_id,
-                    Skill.owner_user_id == user_id,
-                    Skill.kind == "doc",
-                )
-            )
+            select(Skill).where(and_(Skill.id == skill_id, Skill.kind == "doc"))
         )
     ).scalar_one_or_none()
-    if s is None:
+    if s is None or not perms.owns(s.owner_user_id):
         raise HTTPException(status_code=404, detail="skill not found")
     return s
 
@@ -94,7 +88,7 @@ async def list_my_skills(
 ) -> MySkillList:
     resolved = await resolve_skills(db, user_id=perms.user_id, roles=perms.roles)
     rows = sorted([*resolved.doc, *resolved.mcp], key=lambda s: s.name)
-    return MySkillList(items=[_to_out(s, user_id=perms.user_id) for s in rows])
+    return MySkillList(items=[_to_out(s, perms=perms) for s in rows])
 
 
 @router.post("/me/skills", status_code=201, response_model=MySkillOut)
@@ -135,7 +129,7 @@ async def create_my_skill(
             status_code=409, detail="skill name already exists"
         ) from exc
     await db.refresh(skill)
-    return _to_out(skill, user_id=perms.user_id)
+    return _to_out(skill, perms=perms)
 
 
 @router.patch("/me/skills/{skill_id}", response_model=MySkillOut)
@@ -146,7 +140,7 @@ async def patch_my_skill(
     perms: Annotated[ResolvedPermissions, Depends(resolve_permissions)],
 ) -> MySkillOut:
     perms.require("chat.author_skill", resource_type="skill", resource_id=skill_id)
-    skill = await _get_owned_doc_or_404(db, skill_id, perms.user_id)
+    skill = await _get_owned_doc_or_404(db, skill_id, perms)
     if "display_name" in payload.model_fields_set:
         skill.display_name = payload.display_name
     if payload.trigger is not None:
@@ -158,7 +152,7 @@ async def patch_my_skill(
     skill.updated_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(skill)
-    return _to_out(skill, user_id=perms.user_id)
+    return _to_out(skill, perms=perms)
 
 
 @router.delete("/me/skills/{skill_id}", status_code=204)
@@ -168,7 +162,7 @@ async def delete_my_skill(
     perms: Annotated[ResolvedPermissions, Depends(resolve_permissions)],
 ) -> Response:
     perms.require("chat.author_skill", resource_type="skill", resource_id=skill_id)
-    skill = await _get_owned_doc_or_404(db, skill_id, perms.user_id)
+    skill = await _get_owned_doc_or_404(db, skill_id, perms)
     await db.delete(skill)
     await db.commit()
     return Response(status_code=204)
