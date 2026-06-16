@@ -1,5 +1,10 @@
 """Which MCP servers a run may use. The single permission gate decides:
-chat.use_mcp_server + the server row's allowed_roles as resource_roles."""
+chat.use_mcp_server + the server row's allowed_roles as resource_roles.
+
+Lives at the top level (not under ``rehketo.mcp``) so non-mcp layers — the api
+and the skill resolver — can reuse server-access resolution without importing
+the mcp package, which would violate the api-never-imports-mcp contract. It
+depends only on db + permissions, so it stays neutral."""
 
 from __future__ import annotations
 

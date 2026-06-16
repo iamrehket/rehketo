@@ -26,13 +26,13 @@ from rehketo.db.models import (
     UserRole,
 )
 from rehketo.mcp.registry import build_run_toolset
-from rehketo.mcp.servers import allowed_servers
 from rehketo.mcp.skills import (
     SKILLS_ROOT,
     build_skill_subagents,
     doc_skill_files,
-    resolve_skills,
 )
+from rehketo.servers import allowed_servers
+from rehketo.skills import resolve_skills
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession

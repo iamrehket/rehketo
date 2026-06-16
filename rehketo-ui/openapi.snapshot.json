@@ -676,6 +676,90 @@
         "title": "MessageKickoffOut",
         "type": "object"
       },
+      "MySkillList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MySkillOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "MySkillList",
+        "type": "object"
+      },
+      "MySkillOut": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "editable": {
+            "title": "Editable",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructions"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "display_name",
+          "kind",
+          "trigger",
+          "instructions",
+          "enabled",
+          "source",
+          "editable"
+        ],
+        "title": "MySkillOut",
+        "type": "object"
+      },
       "PreferencesIn": {
         "properties": {
           "custom_instructions": {
@@ -1748,6 +1832,32 @@
           }
         ],
         "summary": "Put Preferences",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/me/skills": {
+      "get": {
+        "operationId": "list_my_skills_me_skills_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MySkillList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "APIKeyCookie": []
+          }
+        ],
+        "summary": "List My Skills",
         "tags": [
           "me"
         ]

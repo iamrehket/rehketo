@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from rehketo.db.models import McpServer, Skill, User
-from rehketo.mcp.skills import resolve_skills
+from rehketo.skills import resolve_skills
 
 
 async def test_global_role_and_owned_union(settings_env, db_url, db) -> None:

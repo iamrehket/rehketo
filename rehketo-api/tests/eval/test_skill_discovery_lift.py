@@ -58,8 +58,8 @@ from rehketo.db.models import (
     UserRole,
 )
 from rehketo.mcp import registry
-from rehketo.mcp.skills import ResolvedSkills
 from rehketo.runs.event_bus import PostgresEventBus
+from rehketo.skills import ResolvedSkills
 
 pytestmark = pytest.mark.eval
 
