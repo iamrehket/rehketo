@@ -980,7 +980,13 @@ Create `rehketo-ui/src/lib/skill-form.spec.ts`:
 ```typescript
 import { describe, expect, it } from 'vitest';
 
-import { buildSkillPatchBody, type SkillFormState } from './skill-form';
+import {
+	buildAdminCreateBody,
+	buildAdminPatchBody,
+	buildSkillPatchBody,
+	type AdminSkillFormState,
+	type SkillFormState
+} from './skill-form';
 
 const base: SkillFormState = {
 	displayName: '',
@@ -1001,6 +1007,46 @@ describe('buildSkillPatchBody', () => {
 
 	it('forwards a non-blank display_name', () => {
 		expect(buildSkillPatchBody({ ...base, displayName: 'My Notes' }).display_name).toBe('My Notes');
+	});
+});
+
+const adminBase: AdminSkillFormState = {
+	name: 'policy',
+	kind: 'doc',
+	displayName: '',
+	trigger: 'reimburse',
+	instructions: 'Steps.',
+	mcpServerId: '',
+	allowedRoles: ['User'],
+	enabled: true
+};
+
+describe('buildAdminCreateBody', () => {
+	it('sends instructions and omits mcp_server_id for a doc skill', () => {
+		const body = buildAdminCreateBody(adminBase);
+		expect(body).toMatchObject({ name: 'policy', kind: 'doc', instructions: 'Steps.' });
+		expect('mcp_server_id' in body).toBe(false);
+	});
+
+	it('sends mcp_server_id and omits instructions for an mcp skill', () => {
+		const body = buildAdminCreateBody({
+			...adminBase,
+			kind: 'mcp',
+			instructions: '',
+			mcpServerId: 'srv-1'
+		});
+		expect(body).toMatchObject({ kind: 'mcp', mcp_server_id: 'srv-1' });
+		expect('instructions' in body).toBe(false);
+	});
+});
+
+describe('buildAdminPatchBody', () => {
+	it('never sends name or kind, and sends only the matching backing field', () => {
+		const body = buildAdminPatchBody({ ...adminBase, kind: 'mcp', mcpServerId: 'srv-2' });
+		expect('name' in body).toBe(false);
+		expect('kind' in body).toBe(false);
+		expect(body.mcp_server_id).toBe('srv-2');
+		expect('instructions' in body).toBe(false);
 	});
 });
 ```
@@ -1048,34 +1094,110 @@ export function buildSkillPatchBody(state: SkillFormState): MySkillPatchBody {
 		enabled: state.enabled
 	};
 }
+
+// Admin surface (rehketo-api/rehketo/api/skills_admin.py). One form authors
+// both doc and mcp global skills, so the body carries only the backing field
+// that matches `kind` (mirrors the DB skills_kind_backing check).
+export type AdminSkillCreateBody = {
+	name: string;
+	display_name: string | null;
+	kind: 'doc' | 'mcp';
+	trigger: string;
+	allowed_roles: string[];
+	enabled: boolean;
+	instructions?: string;
+	mcp_server_id?: string;
+};
+
+export type AdminSkillPatchBody = {
+	display_name: string | null;
+	trigger: string;
+	allowed_roles: string[];
+	enabled: boolean;
+	instructions?: string;
+	mcp_server_id?: string;
+};
+
+export type AdminSkillFormState = {
+	name?: string;
+	kind: 'doc' | 'mcp';
+	displayName: string;
+	trigger: string;
+	instructions: string;
+	mcpServerId: string;
+	allowedRoles: string[];
+	enabled: boolean;
+};
+
+export function buildAdminCreateBody(s: AdminSkillFormState): AdminSkillCreateBody {
+	const body: AdminSkillCreateBody = {
+		name: s.name ?? '',
+		display_name: s.displayName || null,
+		kind: s.kind,
+		trigger: s.trigger,
+		allowed_roles: s.allowedRoles,
+		enabled: s.enabled
+	};
+	if (s.kind === 'doc') body.instructions = s.instructions;
+	else body.mcp_server_id = s.mcpServerId;
+	return body;
+}
+
+export function buildAdminPatchBody(s: AdminSkillFormState): AdminSkillPatchBody {
+	// kind + name are identity (not patchable); send only the backing field
+	// matching the existing kind.
+	const body: AdminSkillPatchBody = {
+		display_name: s.displayName || null,
+		trigger: s.trigger,
+		allowed_roles: s.allowedRoles,
+		enabled: s.enabled
+	};
+	if (s.kind === 'doc') body.instructions = s.instructions;
+	else body.mcp_server_id = s.mcpServerId;
+	return body;
+}
 ```
 
 - [ ] **Step 4: Write `SkillForm.svelte`**
 
-Create `rehketo-ui/src/lib/components/SkillForm.svelte` (doc-skill author form, modeled on `McpServerForm.svelte`):
+Create `rehketo-ui/src/lib/components/SkillForm.svelte` — one form for both the user doc surface (`variant="user"`, default) and the admin doc+mcp surface (`variant="admin"`), modeled on `McpServerForm.svelte`:
 
 ```svelte
 <script lang="ts">
 	import {
+		buildAdminCreateBody,
+		buildAdminPatchBody,
 		buildSkillPatchBody,
+		type AdminSkillCreateBody,
+		type AdminSkillPatchBody,
 		type MySkillCreateBody,
 		type MySkillPatchBody
 	} from '$lib/skill-form';
-	import type { MySkillOut } from '$lib/types';
+	import type { AdminSkillOut, McpServerOut, MySkillOut } from '$lib/types';
+
+	// Source of truth for roles: rehketo-api/rehketo/permissions/roles.py.
+	const ROLES = ['Admin', 'Moderator', 'User'];
 
 	let {
 		skill = null,
+		variant = 'user',
+		servers = [],
 		busy = false,
 		onSubmit,
 		onCancel
 	}: {
-		skill?: MySkillOut | null;
+		skill?: MySkillOut | AdminSkillOut | null;
+		variant?: 'user' | 'admin';
+		servers?: McpServerOut[];
 		busy?: boolean;
-		onSubmit: (body: MySkillCreateBody | MySkillPatchBody) => void;
+		onSubmit: (
+			body: MySkillCreateBody | MySkillPatchBody | AdminSkillCreateBody | AdminSkillPatchBody
+		) => void;
 		onCancel?: () => void;
 	} = $props();
 
 	const isEdit = $derived(skill !== null);
+	const isAdmin = $derived(variant === 'admin');
 	const uid = $derived(skill ? `skill-${skill.id}` : 'skill');
 
 	// svelte-ignore state_referenced_locally
@@ -1088,26 +1210,35 @@ Create `rehketo-ui/src/lib/components/SkillForm.svelte` (doc-skill author form, 
 	let instructions = $state(skill?.instructions ?? '');
 	// svelte-ignore state_referenced_locally
 	let enabled = $state(skill?.enabled ?? true);
+	// kind: user authoring is always 'doc'; admin chooses on create, fixed on edit.
+	// svelte-ignore state_referenced_locally
+	let kind = $state<'doc' | 'mcp'>(skill?.kind ?? 'doc');
+	// Admin-only fields — present only on AdminSkillOut.
+	// svelte-ignore state_referenced_locally
+	let allowedRoles = $state<string[]>(
+		skill && 'allowed_roles' in skill ? [...skill.allowed_roles] : [...ROLES]
+	);
+	// svelte-ignore state_referenced_locally
+	let mcpServerId = $state(skill && 'mcp_server_id' in skill ? (skill.mcp_server_id ?? '') : '');
+
+	const isDoc = $derived(kind === 'doc');
 
 	function submit(): void {
-		if (skill) {
+		if (isAdmin) {
+			const state = { name, kind, displayName, trigger, instructions, mcpServerId, allowedRoles, enabled };
+			onSubmit(skill ? buildAdminPatchBody(state) : buildAdminCreateBody(state));
+		} else if (skill) {
 			onSubmit(buildSkillPatchBody({ displayName, trigger, instructions, enabled }));
 		} else {
-			onSubmit({
-				name,
-				display_name: displayName || null,
-				trigger,
-				instructions,
-				enabled
-			});
+			onSubmit({ name, display_name: displayName || null, trigger, instructions, enabled });
 		}
 	}
 
-	const canSubmit = $derived(
-		isEdit
-			? Boolean(trigger) && Boolean(instructions)
-			: Boolean(name) && Boolean(trigger) && Boolean(instructions)
-	);
+	const canSubmit = $derived.by(() => {
+		if (!isEdit && !name) return false;
+		if (!trigger) return false;
+		return isDoc ? Boolean(instructions) : Boolean(mcpServerId);
+	});
 </script>
 
 <div class="flex flex-col gap-3">
@@ -1120,6 +1251,23 @@ Create `rehketo-ui/src/lib/components/SkillForm.svelte` (doc-skill author form, 
 		placeholder={isEdit ? undefined : 'my-notes'}
 		class="rounded-md border border-border p-2 text-sm {isEdit ? 'bg-surface text-muted' : 'bg-bg'}"
 	/>
+
+	{#if isAdmin}
+		<label class="text-xs text-muted" for={`${uid}-kind`}>Kind</label>
+		{#if isEdit}
+			<span class="font-mono text-sm text-muted">{kind}</span>
+		{:else}
+			<select
+				id={`${uid}-kind`}
+				data-field="kind"
+				bind:value={kind}
+				class="rounded-md border border-border bg-bg p-2 text-sm"
+			>
+				<option value="doc">doc</option>
+				<option value="mcp">mcp</option>
+			</select>
+		{/if}
+	{/if}
 
 	<label class="text-xs text-muted" for={`${uid}-display`}>Display name (optional)</label>
 	<input
@@ -1138,14 +1286,41 @@ Create `rehketo-ui/src/lib/components/SkillForm.svelte` (doc-skill author form, 
 		class="rounded-md border border-border bg-bg p-2 text-sm"
 	/>
 
-	<label class="text-xs text-muted" for={`${uid}-instructions`}>Instructions</label>
-	<textarea
-		id={`${uid}-instructions`}
-		data-field="instructions"
-		bind:value={instructions}
-		rows="6"
-		class="resize-y rounded-md border border-border bg-bg p-2 text-sm"
-	></textarea>
+	{#if isDoc}
+		<label class="text-xs text-muted" for={`${uid}-instructions`}>Instructions</label>
+		<textarea
+			id={`${uid}-instructions`}
+			data-field="instructions"
+			bind:value={instructions}
+			rows="6"
+			class="resize-y rounded-md border border-border bg-bg p-2 text-sm"
+		></textarea>
+	{:else}
+		<label class="text-xs text-muted" for={`${uid}-server`}>MCP server</label>
+		<select
+			id={`${uid}-server`}
+			data-field="mcp-server"
+			bind:value={mcpServerId}
+			class="rounded-md border border-border bg-bg p-2 text-sm"
+		>
+			<option value="">— choose a server —</option>
+			{#each servers as srv (srv.id)}
+				<option value={srv.id}>{srv.name}</option>
+			{/each}
+		</select>
+	{/if}
+
+	{#if isAdmin}
+		<fieldset class="flex gap-4 text-sm">
+			<legend class="text-xs text-muted">Allowed roles</legend>
+			{#each ROLES as role (role)}
+				<label class="flex items-center gap-1">
+					<input type="checkbox" value={role} bind:group={allowedRoles} />
+					{role}
+				</label>
+			{/each}
+		</fieldset>
+	{/if}
 
 	<label class="flex items-center gap-2 text-sm">
 		<input data-field="enabled" type="checkbox" bind:checked={enabled} />
@@ -1207,6 +1382,32 @@ describe('SkillForm', () => {
 		const { container } = render(SkillForm, { props: { skill, onSubmit: vi.fn() } });
 		const nameInput = container.querySelector('[data-field="name"]') as HTMLInputElement;
 		expect(nameInput.readOnly).toBe(true);
+	});
+
+	it('admin variant shows a kind selector and swaps instructions for a server picker', () => {
+		const servers = [
+			{
+				id: 's1',
+				name: 'github',
+				url: 'https://x/mcp',
+				has_auth_token: false,
+				allowed_roles: ['User'],
+				enabled: true,
+				auto_approve: false,
+				created_at: '',
+				updated_at: ''
+			}
+		];
+		const { container, getByText } = render(SkillForm, {
+			props: { variant: 'admin', servers, onSubmit: vi.fn() }
+		});
+		const kindSelect = container.querySelector('[data-field="kind"]') as HTMLSelectElement;
+		expect(kindSelect).not.toBeNull();
+		// doc by default -> instructions present, no server picker
+		expect(container.querySelector('[data-field="instructions"]')).not.toBeNull();
+		expect(container.querySelector('[data-field="mcp-server"]')).toBeNull();
+		// submit is disabled until name/trigger/instructions are filled
+		expect((getByText('Add skill') as HTMLButtonElement).disabled).toBe(true);
 	});
 });
 ```
@@ -1841,21 +2042,24 @@ export const load: PageLoad = async ({ url }) => {
 
 - [ ] **Step 3: Add the admin section to the page**
 
-In `rehketo-ui/src/routes/(app)/settings/skills/+page.svelte`, extend the `<script>` to manage admin rows and add the section. Add after the existing imports:
+In `rehketo-ui/src/routes/(app)/settings/skills/+page.svelte`, add the admin types to `<script>` (the `SkillForm` component is already imported from Task 8):
 
 ```svelte
-	import { type AdminSkillOut, type McpServerOut } from '$lib/types';
+	import type { AdminSkillCreateBody, AdminSkillPatchBody } from '$lib/skill-form';
+	import type { AdminSkillOut, McpServerOut } from '$lib/types';
 ```
 
-Add state + handlers inside `<script>` (after the `mine` derived):
+Add state + handlers inside `<script>` (after the `mine` derived). The admin surface reuses `SkillForm variant="admin"`, so the handlers take the typed bodies the form builds — no inline `FormData` parsing:
 
 ```svelte
 	// svelte-ignore state_referenced_locally
 	let adminSkills = $state<AdminSkillOut[]>(data.adminSkills ?? []);
 	const servers: McpServerOut[] = data.servers ?? [];
+	let adminEditingId = $state<string | null>(null);
 	let adminCreateBusy = $state(false);
+	let adminEditBusy = $state(false);
 
-	async function adminCreate(body: Record<string, unknown>): Promise<void> {
+	async function adminCreate(body: AdminSkillCreateBody): Promise<void> {
 		adminCreateBusy = true;
 		try {
 			const created = await apiFetch<AdminSkillOut>('/admin/skills', {
@@ -1868,6 +2072,23 @@ Add state + handlers inside `<script>` (after the `mine` derived):
 			fail('create', err);
 		} finally {
 			adminCreateBusy = false;
+		}
+	}
+
+	async function adminSave(skill: AdminSkillOut, body: AdminSkillPatchBody): Promise<void> {
+		adminEditBusy = true;
+		try {
+			const updated = await apiFetch<AdminSkillOut>(`/admin/skills/${skill.id}`, {
+				method: 'PATCH',
+				body: JSON.stringify(body)
+			});
+			adminSkills = adminSkills.map((s) => (s.id === updated.id ? updated : s));
+			adminEditingId = null;
+			toasts.push({ variant: 'info', message: 'Skill updated.' });
+		} catch (err) {
+			fail('update', err);
+		} finally {
+			adminEditBusy = false;
 		}
 	}
 
@@ -1916,6 +2137,14 @@ Add the section to the markup after the "Your skills" `{/if}`:
 							<div class="flex gap-2">
 								<button
 									type="button"
+									data-action="admin-edit"
+									onclick={() => (adminEditingId = adminEditingId === skill.id ? null : skill.id)}
+									class="rounded-md border border-border px-2 py-1 text-xs hover:bg-surface-hover"
+								>
+									Edit
+								</button>
+								<button
+									type="button"
 									data-action="admin-toggle"
 									onclick={() => adminToggle(skill)}
 									class="rounded-md border border-border px-2 py-1 text-xs hover:bg-surface-hover"
@@ -1932,63 +2161,36 @@ Add the section to the markup after the "Your skills" `{/if}`:
 								</button>
 							</div>
 						</div>
+						{#if adminEditingId === skill.id}
+							<div class="mt-3 border-t border-border pt-3">
+								<SkillForm
+									variant="admin"
+									{skill}
+									{servers}
+									busy={adminEditBusy}
+									onSubmit={(body) => adminSave(skill, body as AdminSkillPatchBody)}
+									onCancel={() => (adminEditingId = null)}
+								/>
+							</div>
+						{/if}
 					</li>
 				{:else}
 					<li class="text-sm text-muted">No global skills configured.</li>
 				{/each}
 			</ul>
 
-			<details class="mt-4 rounded-md border border-border bg-surface p-4">
-				<summary class="cursor-pointer text-sm font-semibold">New global skill</summary>
-				<form
-					class="mt-3 flex flex-col gap-3"
-					onsubmit={(e) => {
-						e.preventDefault();
-						const f = e.currentTarget as HTMLFormElement;
-						const fd = new FormData(f);
-						const kind = String(fd.get('kind'));
-						const body: Record<string, unknown> = {
-							name: String(fd.get('name')),
-							kind,
-							trigger: String(fd.get('trigger')),
-							allowed_roles: fd.getAll('allowed_roles').map(String)
-						};
-						if (kind === 'doc') body.instructions = String(fd.get('instructions'));
-						else body.mcp_server_id = String(fd.get('mcp_server_id'));
-						adminCreate(body);
-						f.reset();
-					}}
-				>
-					<input name="name" placeholder="name" required class="rounded-md border border-border bg-bg p-2 text-sm" />
-					<select name="kind" class="rounded-md border border-border bg-bg p-2 text-sm">
-						<option value="doc">doc</option>
-						<option value="mcp">mcp</option>
-					</select>
-					<input name="trigger" placeholder="use when…" required class="rounded-md border border-border bg-bg p-2 text-sm" />
-					<textarea name="instructions" rows="4" placeholder="instructions (doc skills)" class="resize-y rounded-md border border-border bg-bg p-2 text-sm"></textarea>
-					<select name="mcp_server_id" class="rounded-md border border-border bg-bg p-2 text-sm">
-						<option value="">— server (mcp skills) —</option>
-						{#each servers as srv (srv.id)}
-							<option value={srv.id}>{srv.name}</option>
-						{/each}
-					</select>
-					<fieldset class="flex gap-4 text-sm">
-						<legend class="text-xs text-muted">Allowed roles</legend>
-						{#each ['Admin', 'Moderator', 'User'] as role (role)}
-							<label class="flex items-center gap-1">
-								<input type="checkbox" name="allowed_roles" value={role} /> {role}
-							</label>
-						{/each}
-					</fieldset>
-					<button
-						type="submit"
-						disabled={adminCreateBusy}
-						class="self-end rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
-					>
-						Create
-					</button>
-				</form>
-			</details>
+			<div class="mt-4 rounded-md border border-border bg-surface p-4">
+				<h3 class="text-sm font-semibold">New global skill</h3>
+				<div class="mt-3">
+					<SkillForm
+						variant="admin"
+						skill={null}
+						{servers}
+						busy={adminCreateBusy}
+						onSubmit={(body) => adminCreate(body as AdminSkillCreateBody)}
+					/>
+				</div>
+			</div>
 		</section>
 	{/if}
 ```
