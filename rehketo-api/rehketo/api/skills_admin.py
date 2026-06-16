@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import and_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002  # FastAPI needs runtime type for Depends()
 )
@@ -63,7 +64,7 @@ class AdminSkillPatch(BaseModel):
     # name + kind are identity — not patchable.
     display_name: str | None = None
     trigger: str | None = Field(default=None, min_length=1, max_length=2000)
-    instructions: str | None = None
+    instructions: str | None = Field(default=None, min_length=1)
     mcp_server_id: UUID | None = None
     allowed_roles: list[str] | None = None
     enabled: bool | None = None
@@ -180,7 +181,15 @@ async def create_skill(
         enabled=payload.enabled,
     )
     db.add(skill)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # Race backstop: concurrent create slips past the SELECT pre-check above
+        # and hits the partial unique index — surface as clean 409, not 500.
+        await db.rollback()
+        raise HTTPException(
+            status_code=409, detail="skill name already exists"
+        ) from exc
     await db.refresh(skill)
     return _to_out(skill)
 
@@ -199,6 +208,10 @@ async def patch_skill(
     if payload.trigger is not None:
         skill.trigger = payload.trigger
     if "instructions" in payload.model_fields_set and skill.kind == "doc":
+        if not payload.instructions:
+            raise HTTPException(
+                status_code=422, detail="doc skills require non-empty instructions"
+            )
         skill.instructions = payload.instructions
     if payload.mcp_server_id is not None and skill.kind == "mcp":
         # An mcp-skill never clears its server; a doc-skill PATCH carrying

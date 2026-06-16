@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002  # FastAPI needs runtime type for Depends()
 )
@@ -125,7 +126,15 @@ async def create_my_skill(
         enabled=payload.enabled,
     )
     db.add(skill)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # Race backstop: concurrent create slips past the SELECT pre-check above
+        # and hits the partial unique index — surface as clean 409, not 500.
+        await db.rollback()
+        raise HTTPException(
+            status_code=409, detail="skill name already exists"
+        ) from exc
     await db.refresh(skill)
     return _to_out(skill, user_id=perms.user_id)
 

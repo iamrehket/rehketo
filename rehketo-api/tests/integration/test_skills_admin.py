@@ -209,3 +209,41 @@ async def test_patch_delete_user_owned_skill_is_404(settings_env, db_url, db) ->
 
         r = await c.delete(f"/admin/skills/{private_skill.id}", **_auth(sid, csrf))
         assert r.status_code == 404
+
+
+async def test_patch_doc_skill_empty_instructions_is_422(
+    settings_env, db_url, db
+) -> None:
+    """PATCHing a doc skill with empty-string instructions returns 422."""
+    sid, csrf = await _seed_session(db)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post("/admin/skills", json=_DOC, **_auth(sid, csrf))
+        assert r.status_code == 201
+        skill_id = r.json()["id"]
+
+        r = await c.patch(
+            f"/admin/skills/{skill_id}",
+            json={"instructions": ""},
+            **_auth(sid, csrf),
+        )
+        assert r.status_code == 422
+
+
+async def test_patch_doc_skill_null_instructions_is_422(
+    settings_env, db_url, db
+) -> None:
+    """PATCHing a doc skill with null instructions returns 422."""
+    sid, csrf = await _seed_session(db)
+    app = create_app()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post("/admin/skills", json=_DOC, **_auth(sid, csrf))
+        assert r.status_code == 201
+        skill_id = r.json()["id"]
+
+        r = await c.patch(
+            f"/admin/skills/{skill_id}",
+            json={"instructions": None},
+            **_auth(sid, csrf),
+        )
+        assert r.status_code == 422
