@@ -2097,7 +2097,7 @@ dev = [
     { name = "import-linter", specifier = ">=2.11" },
     { name = "memray", marker = "sys_platform != 'win32'", specifier = ">=1.19.2" },
     { name = "mypy", specifier = ">=1.19.1" },
-    { name = "pre-commit", specifier = ">=4.0.0" },
+    { name = "pre-commit", specifier = ">=4.6.0" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-asyncio", specifier = ">=0.24.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
